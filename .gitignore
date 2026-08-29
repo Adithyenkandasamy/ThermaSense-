@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# Environment / secrets — never commit .env
+.env
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Large geospatial data files
+*.tif
+*.tiff
+*.csv
+*.geojson
+*.shp
+*.dbf
+*.prj
+*.gpkg
+*.sqlite
+*.db
+data/
+models/
+artifacts/
+cache/
+tmp/
+
+# Docker logs
+*.log

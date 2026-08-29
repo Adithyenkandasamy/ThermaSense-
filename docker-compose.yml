@@ -1,0 +1,39 @@
+services:
+  # ────────────────────────────────────────────
+  # FastAPI Backend
+  # ────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: thermasense_api
+    restart: unless-stopped
+    environment:
+      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-}
+      APP_ENV: ${APP_ENV:-development}
+      APP_DEBUG: ${APP_DEBUG:-true}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+
+  # ────────────────────────────────────────────
+  # Next.js Frontend
+  # ────────────────────────────────────────────
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: thermasense_web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
