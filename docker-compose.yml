@@ -43,9 +43,14 @@ services:
       # Override database host to use the docker service name
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-thermasense}:${POSTGRES_PASSWORD:-thermasense}@db:5432/${POSTGRES_DB:-thermasense}
       ALEMBIC_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-thermasense}:${POSTGRES_PASSWORD:-thermasense}@db:5432/${POSTGRES_DB:-thermasense}
+      POSTGRES_USER: ${POSTGRES_USER:-thermasense}
+      POSTGRES_DB: ${POSTGRES_DB:-thermasense}
       APP_ENV: ${APP_ENV:-development}
       APP_DEBUG: ${APP_DEBUG:-true}
-      FIRMS_API_KEY: ${FIRMS_API_KEY:-}
+      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-}
+      FIRMS_SOURCE: ${FIRMS_SOURCE:-VIIRS_SNPP_NRT}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      INGEST_INTERVAL_MINUTES: ${INGEST_INTERVAL_MINUTES:-10}
       DEMO_BBOX_XMIN: ${DEMO_BBOX_XMIN:--124.5}
       DEMO_BBOX_YMIN: ${DEMO_BBOX_YMIN:-32.5}
       DEMO_BBOX_XMAX: ${DEMO_BBOX_XMAX:--114.0}
@@ -54,13 +59,18 @@ services:
       - "${APP_PORT:-8000}:8000"
     volumes:
       # Hot-reload: mount source into container
-      - ./app:/app/app:ro
-      - ./alembic.ini:/app/alembic.ini:ro
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
     command: >
+      sh -c "until pg_isready -h db -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}; do
+      echo waiting for database;
+      sleep 2;
+      done;
+      alembic upgrade head &&
       uvicorn app.main:app
       --host 0.0.0.0
       --port 8000
-      --reload
+      --reload"
 
 volumes:
   postgres_data:

@@ -32,6 +32,14 @@ uv.lock
 .coverage
 htmlcov/
 
+# Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
 # Large geospatial data files
 *.tif
 *.tiff
