@@ -1,0 +1,67 @@
+services:
+  # ────────────────────────────────────────────
+  # PostgreSQL with PostGIS extension
+  # Using postgis/postgis which ships with
+  # PostGIS pre-installed and the extension
+  # auto-created in the template database.
+  # ────────────────────────────────────────────
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: thermasense_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-thermasense}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-thermasense}
+      POSTGRES_DB: ${POSTGRES_DB:-thermasense}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-thermasense} -d ${POSTGRES_DB:-thermasense}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ────────────────────────────────────────────
+  # FastAPI application
+  # Uses host-mounted source for hot-reload
+  # during development.
+  # ────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: thermasense_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Override database host to use the docker service name
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-thermasense}:${POSTGRES_PASSWORD:-thermasense}@db:5432/${POSTGRES_DB:-thermasense}
+      ALEMBIC_DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-thermasense}:${POSTGRES_PASSWORD:-thermasense}@db:5432/${POSTGRES_DB:-thermasense}
+      APP_ENV: ${APP_ENV:-development}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      FIRMS_API_KEY: ${FIRMS_API_KEY:-}
+      DEMO_BBOX_XMIN: ${DEMO_BBOX_XMIN:--124.5}
+      DEMO_BBOX_YMIN: ${DEMO_BBOX_YMIN:-32.5}
+      DEMO_BBOX_XMAX: ${DEMO_BBOX_XMAX:--114.0}
+      DEMO_BBOX_YMAX: ${DEMO_BBOX_YMAX:-42.0}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      # Hot-reload: mount source into container
+      - ./app:/app/app:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+
+volumes:
+  postgres_data:
+    name: thermasense_postgres_data

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ThermaSense API Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 30px;
+        background: #111827;
+        color: #f9fafb;
+      }
+      .card {
+        background: #1f2937;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+      }
+      button {
+        background: #2563eb;
+        border: none;
+        color: white;
+        padding: 10px 18px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      pre {
+        background: #0f172a;
+        padding: 16px;
+        border-radius: 8px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ThermaSense Backend Example</h1>
+
+    <div class="card">
+      <button id="loadHealth">Load /health</button>
+      <button id="loadEvents">Load /api/v1/events/latest</button>
+      <button id="loadAi">Show AI Summary</button>
+      <div id="status">Click a button to fetch data.</div>
+    </div>
+
+    <div class="card">
+      <h3>Response</h3>
+      <pre id="output">{}</pre>
+    </div>
+
+    <div class="card">
+      <h3>AI Summary</h3>
+      <pre id="aiOutput">Click "Show AI Summary" to load an AI-generated event summary.</pre>
+    </div>
+
+    <script>
+      const output = document.getElementById('output');
+      const status = document.getElementById('status');
+      const aiOutput = document.getElementById('aiOutput');
+
+      async function fetchJson(url) {
+        status.textContent = 'Loading...';
+        try {
+          const res = await fetch(url, { mode: 'cors' });
+          const data = await res.json();
+          output.textContent = JSON.stringify(data, null, 2);
+          status.textContent = `Status: ${res.status} ${res.statusText}`;
+        } catch (err) {
+          output.textContent = 'Error: ' + err.message;
+          status.textContent = 'Request failed';
+        }
+      }
+
+      async function showAiSummary() {
+        status.textContent = 'Looking for a HIGH or EXTREME event...';
+        aiOutput.textContent = 'Loading...';
+
+        try {
+          const latestRes = await fetch('http://localhost:8000/api/v1/events?per_page=50&days=30', {
+            mode: 'cors',
+          });
+          const latestData = await latestRes.json();
+          const events = latestData.items || [];
+          const event = events.find((item) =>
+            item.risk_level === 'HIGH' || item.risk_level === 'EXTREME'
+          ) || events[0];
+
+          if (!event) {
+            aiOutput.textContent = 'No events found yet. Run ingestion first, then try again.';
+            status.textContent = 'No events available';
+            return;
+          }
+
+          const detailRes = await fetch(`http://localhost:8000/api/v1/events/${event.id}`, {
+            mode: 'cors',
+          });
+          const detail = await detailRes.json();
+
+          output.textContent = JSON.stringify(detail, null, 2);
+          aiOutput.textContent = detail.ai_summary || (
+            'No AI summary for this event yet. AI summaries are generated only for HIGH or EXTREME events, and require GROQ_API_KEY in .env.'
+          );
+          status.textContent = `Loaded event ${detail.id} (${detail.risk_level})`;
+        } catch (err) {
+          aiOutput.textContent = 'Error: ' + err.message;
+          status.textContent = 'AI request failed';
+        }
+      }
+
+      document.getElementById('loadHealth').addEventListener('click', () => {
+        fetchJson('http://localhost:8000/health');
+      });
+
+      document.getElementById('loadEvents').addEventListener('click', () => {
+        fetchJson('http://localhost:8000/api/v1/events/latest?limit=5');
+      });
+
+      document.getElementById('loadAi').addEventListener('click', showAiSummary);
+    </script>
+  </body>
+</html>

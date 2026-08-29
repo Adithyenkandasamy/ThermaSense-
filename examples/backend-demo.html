@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ThermaSense Backend Demo</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f5f7fb;
+      color: #172033;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+
+    p {
+      margin: 0 0 18px;
+      color: #536174;
+    }
+
+    .controls,
+    .panel {
+      background: #ffffff;
+      border: 1px solid #dbe2ee;
+      border-radius: 8px;
+      box-shadow: 0 10px 24px rgba(22, 33, 54, 0.06);
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 14px;
+      margin: 20px 0;
+    }
+
+    button,
+    select {
+      border: 1px solid #c9d3e3;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #172033;
+      font: inherit;
+      padding: 9px 12px;
+    }
+
+    button {
+      cursor: pointer;
+      background: #1f6feb;
+      border-color: #1f6feb;
+      color: #ffffff;
+    }
+
+    button.secondary {
+      background: #ffffff;
+      color: #172033;
+      border-color: #c9d3e3;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+
+    .panel {
+      padding: 16px;
+      min-height: 120px;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+
+    pre {
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #edf1f7;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: #536174;
+      font-weight: 600;
+    }
+
+    .status {
+      margin-top: 12px;
+      color: #536174;
+      font-size: 13px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        background: #101624;
+        color: #edf2fb;
+      }
+
+      p,
+      th,
+      .status {
+        color: #aeb9ca;
+      }
+
+      .controls,
+      .panel,
+      button.secondary,
+      select {
+        background: #151e2f;
+        border-color: #2a3850;
+        color: #edf2fb;
+      }
+
+      th,
+      td {
+        border-bottom-color: #26344b;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ThermaSense Backend Demo</h1>
+    <p>This page reads data from the FastAPI backend at <code>http://localhost:8000</code>.</p>
+
+    <section class="controls" aria-label="Backend controls">
+      <button type="button" data-action="refresh">Refresh data</button>
+      <button type="button" class="secondary" data-action="ingest">Run ingest</button>
+      <select id="riskFilter" aria-label="Risk filter">
+        <option value="">All risk levels</option>
+        <option value="LOW">Low</option>
+        <option value="MODERATE">Moderate</option>
+        <option value="HIGH">High</option>
+        <option value="EXTREME">Extreme</option>
+      </select>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Health</h2>
+        <pre id="healthOutput">Not loaded yet.</pre>
+      </article>
+
+      <article class="panel">
+        <h2>Stats</h2>
+        <pre id="statsOutput">Not loaded yet.</pre>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top: 14px;">
+      <h2>Latest Events</h2>
+      <div id="eventsOutput">Not loaded yet.</div>
+      <div class="status" id="statusText"></div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = 'http://localhost:8000';
+    const healthOutput = document.querySelector('#healthOutput');
+    const statsOutput = document.querySelector('#statsOutput');
+    const eventsOutput = document.querySelector('#eventsOutput');
+    const statusText = document.querySelector('#statusText');
+    const riskFilter = document.querySelector('#riskFilter');
+
+    function showJson(element, data) {
+      element.textContent = JSON.stringify(data, null, 2);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '-')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    async function requestJson(path, options) {
+      const response = await fetch(`${API_BASE}${path}`, options);
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return response.json();
+    }
+
+    function renderEvents(events) {
+      if (!events.length) {
+        eventsOutput.textContent = 'No events returned.';
+        return;
+      }
+
+      const rows = events.map((event) => `
+        <tr>
+          <td>${escapeHtml(event.id)}</td>
+          <td>${escapeHtml(event.risk_level)}</td>
+          <td>${escapeHtml(Number(event.risk_score).toFixed(2))}</td>
+          <td>${escapeHtml(`${event.latitude}, ${event.longitude}`)}</td>
+          <td>${escapeHtml(event.frp)}</td>
+          <td>${escapeHtml(event.satellite)}</td>
+        </tr>
+      `).join('');
+
+      eventsOutput.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Risk</th>
+              <th>Score</th>
+              <th>Location</th>
+              <th>FRP</th>
+              <th>Satellite</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    async function refreshData() {
+      statusText.textContent = 'Loading backend data...';
+      try {
+        const risk = riskFilter.value;
+        const listPath = risk
+          ? `/api/v1/events?per_page=10&days=30&risk_level=${encodeURIComponent(risk)}`
+          : '/api/v1/events?per_page=10&days=30';
+
+        const [health, stats, eventsPage] = await Promise.all([
+          requestJson('/health'),
+          requestJson('/api/v1/events/stats'),
+          requestJson(listPath)
+        ]);
+
+        showJson(healthOutput, health);
+        showJson(statsOutput, stats);
+        renderEvents(eventsPage.items || []);
+        statusText.textContent = `Loaded ${eventsPage.items?.length || 0} event rows.`;
+      } catch (error) {
+        statusText.textContent = `Backend request failed: ${error.message}. Start the API on port 8000 and try again.`;
+      }
+    }
+
+    async function runIngest() {
+      statusText.textContent = 'Running ingestion...';
+      try {
+        const result = await requestJson('/api/v1/ingest', { method: 'POST' });
+        statusText.textContent = result.message || 'Ingestion finished.';
+        await refreshData();
+      } catch (error) {
+        statusText.textContent = `Ingest failed: ${error.message}.`;
+      }
+    }
+
+    document.querySelector('[data-action="refresh"]').addEventListener('click', refreshData);
+    document.querySelector('[data-action="ingest"]').addEventListener('click', runIngest);
+    riskFilter.addEventListener('change', refreshData);
+
+    refreshData();
+  </script>
+</body>
+</html>
