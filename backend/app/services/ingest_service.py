@@ -1,12 +1,22 @@
 """
 Ingest orchestration service.
 
-Ties together:
-  1. FIRMS fetch   → firms_client.py
-  2. CSV parsing   → ingestion/parser.py
-  3. Classification → services/classifier.py
-  4. DB upsert     → SQLAlchemy (upsert-on-conflict)
-  5. Groq summaries → services/groq_analyst.py (HIGH + EXTREME only)
+Pipeline:
+  1. FIRMS fetch      → ingestion/firms_client.py
+  2. CSV parsing      → ingestion/parser.py
+  3. Risk classify    → services/classifier.py  (fast, at insert time)
+  4. DB upsert        → ON CONFLICT DO NOTHING
+  5. Full analysis    → services/analysis_service.process_event()
+                          ├── context (PostGIS facilities + land cover)
+                          ├── history (real DB queries)
+                          ├── classification (rule-based engine)
+                          ├── risk (extended engine)
+                          ├── Groq AI (or fallback)
+                          └── EventAnalysis stored
+  6. WebSocket        → broadcast to connected clients
+
+If analysis fails for a new event, the ThermalEvent is preserved.
+Analysis can be retried via POST /api/v1/events/{id}/analyze.
 """
 
 import logging
@@ -14,7 +24,7 @@ from datetime import datetime, timezone
 
 from geoalchemy2.shape import from_shape
 from shapely.geometry import Point
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,7 +45,7 @@ logger = logging.getLogger(__name__)
 async def run_ingestion(db: AsyncSession) -> dict:
     """
     Full ingestion pipeline:
-      fetch → parse → classify → upsert → groq-enrich
+      fetch → parse → classify → upsert → full analysis → broadcast
 
     Returns a summary dict for the API response.
     """
@@ -52,7 +62,7 @@ async def run_ingestion(db: AsyncSession) -> dict:
             "inserted": demo_result["events_inserted"],
             "skipped_duplicates": 0,
             "groq_summaries_generated": 0,
-            "message": "FIRMS_MAP_KEY is not configured, so deterministic demo data was seeded.",
+            "message": "FIRMS_MAP_KEY is not configured — deterministic demo data seeded.",
             "details": demo_result,
         }
 
@@ -93,15 +103,12 @@ async def run_ingestion(db: AsyncSession) -> dict:
     # ── 3. Classify + upsert ────────────────────────────────────────
     inserted = 0
     skipped = 0
-    high_extreme_events: list[ThermalEvent] = []
+    new_event_ids: list[int] = []
 
     for event in parsed_events:
         risk_level, risk_score = classify(event)
-
-        # Build PostGIS POINT geometry
         geom = from_shape(Point(event.longitude, event.latitude), srid=4326)
 
-        # pg_insert with ON CONFLICT DO NOTHING (deduplication)
         stmt = (
             pg_insert(ThermalEvent)
             .values(
@@ -121,10 +128,9 @@ async def run_ingestion(db: AsyncSession) -> dict:
                 version=event.version,
                 risk_level=risk_level,
                 risk_score=risk_score,
+                source="VIIRS_SNPP_NRT",
             )
-            .on_conflict_do_nothing(
-                constraint="uq_hotspot"
-            )
+            .on_conflict_do_nothing(constraint="uq_hotspot")
             .returning(ThermalEvent.id, ThermalEvent.risk_level)
         )
 
@@ -133,54 +139,54 @@ async def run_ingestion(db: AsyncSession) -> dict:
 
         if row:
             inserted += 1
-            if risk_level in GROQ_TRIGGER_LEVELS:
-                # Retrieve the full object for Groq enrichment
-                te = await db.get(ThermalEvent, row[0])
-                if te:
-                    high_extreme_events.append(te)
+            new_event_ids.append(row[0])
         else:
             skipped += 1
 
     await db.flush()
     logger.info("Upserted %d new events, skipped %d duplicates", inserted, skipped)
 
-    # ── 4. Groq enrichment (HIGH + EXTREME only) ────────────────────
-    groq_count = 0
-    groq_api_key = settings.groq_api_key
+    # ── 4. Full analysis pipeline for each new event ──────────────────
+    # We run analysis synchronously here so the ingest response reflects
+    # the complete state. For high-volume production a task queue would
+    # be used, but for the hackathon this is acceptable.
+    analyzed = 0
+    analysis_errors = 0
+    websocket_broadcasts = 0
 
-    # Limit Groq calls to top-5 highest FRP events to avoid rate limits
-    top_events = sorted(
-        high_extreme_events,
-        key=lambda e: (e.frp or 0),
-        reverse=True,
-    )[:5]
+    if new_event_ids:
+        from app.services.analysis_service import process_event
+        from app.services.connection_manager import manager as ws_manager
 
-    for te in top_events:
-        if te.ai_generated:
-            continue  # already has a summary
+        for event_id in new_event_ids:
+            try:
+                result = await process_event(event_id, db)
+                analyzed += 1
 
-        groq_result = await generate_event_summary(
-            groq_api_key=groq_api_key,
-            event_data={
-                "latitude": te.latitude,
-                "longitude": te.longitude,
-                "frp": te.frp,
-                "brightness": te.brightness,
-                "confidence": te.confidence,
-                "satellite": te.satellite,
-                "daynight": te.daynight,
-                "acq_date": str(te.acq_date),
-                "acq_time": te.acq_time,
-                "risk_level": te.risk_level.value,
-            },
-        )
+                # ── 5. WebSocket broadcast ─────────────────────────────────
+                if ws_manager.connection_count > 0:
+                    await ws_manager.broadcast(
+                        {
+                            "type": "THERMAL_EVENT_ANALYZED",
+                            "event_id": event_id,
+                            "classification": result.get("classification", "UNKNOWN"),
+                            "risk_level": result.get("risk_level", "UNKNOWN"),
+                            "risk_score": result.get("risk_score", 0.0),
+                            "latitude": result["packet"]["event"]["latitude"],
+                            "longitude": result["packet"]["event"]["longitude"],
+                            "frp": result["packet"]["event"]["frp"],
+                        }
+                    )
+                    websocket_broadcasts += 1
 
-        if groq_result:
-            te.ai_summary = format_summary_text(groq_result)
-            te.ai_generated = True
-            groq_count += 1
-
-    await db.flush()
+            except Exception as exc:
+                analysis_errors += 1
+                logger.error(
+                    "Analysis failed for new event %s: %s "
+                    "(event data preserved, retry with POST /analyze)",
+                    event_id,
+                    exc,
+                )
 
     elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
 
@@ -189,46 +195,20 @@ async def run_ingestion(db: AsyncSession) -> dict:
         "fetched": fetched,
         "inserted": inserted,
         "skipped_duplicates": skipped,
-        "groq_summaries_generated": groq_count,
+        "analyzed": analyzed,
+        "analysis_errors": analysis_errors,
+        "groq_summaries_generated": analyzed,
+        "websocket_broadcasts": websocket_broadcasts,
         "message": (
             f"Ingested {inserted} new events ({skipped} duplicates skipped). "
-            f"Generated {groq_count} AI summaries. Completed in {elapsed:.1f}s."
+            f"Analysed {analyzed} events ({analysis_errors} errors). "
+            f"Completed in {elapsed:.1f}s."
         ),
-        "details": {
-            "elapsed_seconds": elapsed,
-            "groq_enriched_event_count": groq_count,
-        },
+        "details": {"elapsed_seconds": elapsed},
     }
 
 
 async def get_stats(db: AsyncSession) -> dict:
-    """Compute summary stats for the /stats endpoint."""
-    from datetime import timedelta
-
-    # Total count
-    total = await db.scalar(select(func.count(ThermalEvent.id)))
-
-    # By risk level
-    risk_rows = await db.execute(
-        select(ThermalEvent.risk_level, func.count(ThermalEvent.id))
-        .group_by(ThermalEvent.risk_level)
-    )
-    by_risk = {row[0].value: row[1] for row in risk_rows}
-
-    # Last 24h
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    last_24h = await db.scalar(
-        select(func.count(ThermalEvent.id)).where(ThermalEvent.created_at >= cutoff)
-    )
-
-    # Latest ingestion time
-    last_created = await db.scalar(select(func.max(ThermalEvent.created_at)))
-
-    return {
-        "total_events": total or 0,
-        "by_risk_level": by_risk,
-        "last_ingestion": last_created,
-        "events_last_24h": last_24h or 0,
-        "extreme_count": by_risk.get("EXTREME", 0),
-        "high_count": by_risk.get("HIGH", 0),
-    }
+    """Compute summary stats — delegated to analysis_service to avoid duplication."""
+    from app.services.analysis_service import get_stats as _get_stats
+    return await _get_stats(db)

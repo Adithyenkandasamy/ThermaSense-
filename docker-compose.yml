@@ -47,9 +47,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-thermasense}
       APP_ENV: ${APP_ENV:-development}
       APP_DEBUG: ${APP_DEBUG:-true}
-      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-}
+      # Accept both naming conventions for the FIRMS key
+      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-${FIRMS_API_KEY:-}}
       FIRMS_SOURCE: ${FIRMS_SOURCE:-VIIRS_SNPP_NRT}
-      LLM_API_KEY: ${LLM_API_KEY:-}
+      # Accept both naming conventions for the Groq key
+      LLM_API_KEY: ${LLM_API_KEY:-${GROQ_API_KEY:-}}
       INGEST_INTERVAL_MINUTES: ${INGEST_INTERVAL_MINUTES:-10}
       DEMO_BBOX_XMIN: ${DEMO_BBOX_XMIN:--124.5}
       DEMO_BBOX_YMIN: ${DEMO_BBOX_YMIN:-32.5}
