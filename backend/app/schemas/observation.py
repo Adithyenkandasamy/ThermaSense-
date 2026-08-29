@@ -101,3 +101,43 @@ class IngestionResponse(BaseModel):
     observations: list[HotspotResponse] = Field(
         default_factory=list, description="Fetched observations"
     )
+
+
+# ── Module 2: Database-backed Observation Schemas ────────────────
+
+
+class ObservationResponse(BaseModel):
+    """A single stored observation from the database."""
+
+    model_config = {"from_attributes": True}
+
+    id: str = Field(..., description="UUID observation identifier")
+    source: str = Field(..., description="FIRMS source ID")
+    latitude: float
+    longitude: float
+    acquisition_datetime: datetime
+    acq_date: str
+    acq_time: str
+    satellite: str
+    instrument: str
+    brightness: Optional[float] = None
+    bright_ti4: Optional[float] = None
+    bright_ti5: Optional[float] = None
+    frp: Optional[float] = None
+    confidence: Optional[str] = None
+    daynight: Optional[str] = None
+    observation_hash: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ObservationListResponse(BaseModel):
+    """Paginated list of stored observations."""
+
+    total: int = Field(..., description="Total matching observations")
+    limit: int = Field(..., description="Page size")
+    offset: int = Field(..., description="Current offset")
+    observations: list[ObservationResponse] = Field(
+        default_factory=list, description="Observations in this page"
+    )
+

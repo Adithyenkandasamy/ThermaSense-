@@ -65,12 +65,11 @@ export default function MapView({
       className="h-full w-full"
       style={{ background: "#0f172a" }}
     >
-      {/* Dark-themed map tiles */}
+      {/* Dark-themed inverted OpenStreetMap tiles */}
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>'
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        maxZoom={20}
-        crossOrigin={true}
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        maxZoom={19}
       />
 
       <ZoomControl position="bottomright" />

@@ -1,18 +1,18 @@
 """
-FIRMS ingestion trigger endpoint.
+FIRMS ingestion trigger endpoint (Module 2).
 
 Endpoint:
-  POST /api/ingestion/firms — Trigger a FIRMS data fetch
+  POST /api/ingestion/firms — Fetch, normalize, validate, store
 """
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_app_settings
-from app.core.config import Settings
-from app.schemas.observation import IngestionRequest, IngestionResponse
-from app.services.firms_service import fetch_hotspots
+from app.core.database import get_db
+from app.schemas.ingestion import IngestionRequestV2, IngestionSummary
+from app.services import observation_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,53 +21,43 @@ router = APIRouter(prefix="/api/ingestion", tags=["ingestion"])
 
 @router.post(
     "/firms",
-    response_model=IngestionResponse,
-    summary="Trigger FIRMS data ingestion",
+    response_model=IngestionSummary,
+    summary="Ingest FIRMS data into database",
 )
 async def trigger_firms_ingestion(
-    request: IngestionRequest = IngestionRequest(),
-    settings: Settings = Depends(get_app_settings),
-) -> IngestionResponse:
+    request: IngestionRequestV2 = IngestionRequestV2(),
+    db: AsyncSession = Depends(get_db),
+) -> IngestionSummary:
     """
-    Manually trigger a NASA FIRMS data fetch.
-
-    In the MVP, data is fetched and returned directly.
-    In future phases, this will also persist data to the database.
+    Fetch thermal anomaly data from NASA FIRMS, normalize,
+    validate, deduplicate, and store in PostgreSQL.
 
     Body parameters:
-    - `satellite`: 'NOAA-20' or 'NOAA-21'
-    - `day_range`: 1–5 days
+    - `source`: FIRMS source ID (VIIRS_NOAA20_NRT or VIIRS_NOAA21_NRT)
     - `area`: 'world' or 'xmin,ymin,xmax,ymax'
+    - `day_range`: 1–5 days
     """
     try:
-        observations, source_name, area_used = await fetch_hotspots(
-            map_key=settings.firms_map_key,
-            satellite=request.satellite,
-            day_range=request.day_range,
+        summary = await observation_service.ingest_firms_data(
+            db,
+            source=request.source,
             area=request.area,
+            day_range=request.day_range,
         )
+        return IngestionSummary(**summary)
+
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
-        return IngestionResponse(
+        return IngestionSummary(
+            source=request.source,
             status="error",
-            message=str(exc),
-            total_fetched=0,
-            satellite_source=request.satellite,
+            error=str(exc),
         )
     except Exception as exc:
-        logger.error("FIRMS ingestion failed: %s", exc)
-        return IngestionResponse(
+        logger.error("Ingestion failed: %s", exc, exc_info=True)
+        return IngestionSummary(
+            source=request.source,
             status="error",
-            message=f"FIRMS fetch failed: {exc}",
-            total_fetched=0,
-            satellite_source=request.satellite,
+            error=f"Ingestion failed: {exc}",
         )
-
-    return IngestionResponse(
-        status="ok",
-        message=f"Fetched {len(observations)} observations from {source_name}",
-        total_fetched=len(observations),
-        satellite_source=source_name,
-        observations=observations,
-    )

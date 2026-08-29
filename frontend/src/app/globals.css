@@ -18,6 +18,11 @@ body {
   font-family: inherit;
 }
 
+/* Dark mode tile filter for standard OpenStreetMap tiles */
+.leaflet-tile {
+  filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(90%);
+}
+
 /* Tooltip styling */
 .thermasense-tooltip {
   background: rgba(15, 23, 42, 0.95) !important;

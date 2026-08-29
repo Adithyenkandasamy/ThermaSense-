@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Obtain a free key at https://firms.modaps.eosdis.nasa.gov/api/
     firms_map_key: str = ""
 
+    # ── Database ──────────────────────────────────────────────────
+    database_url: str = "postgresql+asyncpg://thermasense:thermasense@localhost:5432/thermasense"
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"

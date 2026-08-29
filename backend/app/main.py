@@ -2,17 +2,19 @@
 ThermaSense FastAPI application.
 
 Entry point for the API server.
-MVP version — no database, no background scheduler.
-Data is fetched on-demand from NASA FIRMS and returned directly.
+Module 1: On-demand FIRMS data fetch.
+Module 2: PostgreSQL persistence, normalization, deduplication.
 """
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import api_router
 from app.core.config import get_settings
+from app.core.database import init_db, close_db
 
 settings = get_settings()
 
@@ -23,17 +25,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Async lifespan — initialize and dispose database engine."""
+    await init_db()
+    logger.info("ThermaSense API initialized (env=%s)", settings.app_env)
+    yield
+    await close_db()
+    logger.info("ThermaSense API shutdown complete")
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="ThermaSense API",
         description=(
             "Geospatial intelligence platform for satellite thermal "
-            "anomaly data. Fetches real-time data from NASA FIRMS "
-            "and provides structured observation data for analysis."
+            "anomaly data. Fetches real-time data from NASA FIRMS, "
+            "normalizes, validates, and stores observations in PostgreSQL."
         ),
-        version="0.1.0",
+        version="0.2.0",
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     # ── CORS ───────────────────────────────────────────────────────
@@ -53,8 +66,6 @@ def create_app() -> FastAPI:
 
     # ── Routes ─────────────────────────────────────────────────────
     app.include_router(api_router)
-
-    logger.info("ThermaSense API initialized (env=%s)", settings.app_env)
 
     return app
 
