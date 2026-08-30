@@ -11,6 +11,7 @@
 import { useState, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import type { SatelliteSource, Hotspot, RegionOption } from "@/types/hotspot";
+import type { ThermalAlert } from "@/types/export";
 import { REGION_BBOXES } from "@/types/hotspot";
 import { fetchHotspots } from "@/services/api";
 
@@ -86,12 +87,34 @@ export default function Home() {
     setSelectedHotspot((prev) => (prev?.id === h.id ? null : h));
   }, []);
 
+  const handleSelectAlert = useCallback((a: ThermalAlert) => {
+    setSelectedHotspot({
+      id: a.event_id || a.alert_id,
+      latitude: a.latitude,
+      longitude: a.longitude,
+      acquisition_datetime: a.triggered_at,
+      satellite: "NOAA-20",
+      instrument: "VIIRS",
+      brightness: null,
+      bright_ti4: null,
+      bright_ti5: null,
+      frp: a.frp || 0,
+      confidence: a.severity === "CRITICAL" ? "high" : "nominal",
+      daynight: "D",
+      source: "ALERT_TRIGGERED",
+    });
+  }, []);
+
   const handleClose = useCallback(() => setSelectedHotspot(null), []);
 
   return (
     <div className="app-shell">
       {/* Top Navigation */}
-      <TopNav hotspotsCount={hotspots.length} lastFetched={lastFetched} />
+      <TopNav
+        hotspotsCount={hotspots.length}
+        lastFetched={lastFetched}
+        onSelectAlert={handleSelectAlert}
+      />
 
       {/* Body */}
       <div className="app-body">
@@ -122,6 +145,7 @@ export default function Home() {
               hotspots={hotspots}
               selectedHotspot={selectedHotspot}
               onSelectHotspot={handleSelect}
+              confidenceThreshold={confidenceThreshold}
             />
 
             {/* Recent Events overlay */}

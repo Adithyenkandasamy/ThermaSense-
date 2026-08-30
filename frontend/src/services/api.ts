@@ -9,11 +9,15 @@ import type {
   HotspotFetchParams,
   HotspotListResponse,
 } from "@/types/hotspot";
+import type { AttributionResult } from "@/types/attribution";
+
 import type {
   MonitoringLogsResponse,
   MonitoringRunResponse,
   MonitoringStatus,
 } from "@/types/monitoring";
+import type { AlertListResponse } from "@/types/export";
+import type { EventListResponse } from "@/types/event";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -75,6 +79,20 @@ export async function fetchStoredObservations(params?: {
     area: "Stored Observations",
     observations: data.observations,
   };
+}
+
+/**
+ * Fetch cause attribution from the backend engine for a single observation.
+ * Calls GET /api/attribution/observation/{id} which runs the full multi-source
+ * rule engine (satellite + geospatial + weather) and returns a classified result.
+ */
+export async function fetchAttribution(observationId: string): Promise<AttributionResult> {
+  const url = `${API_BASE}/api/attribution/observation/${observationId}`;
+  const response = await fetchWithTimeout(url, {}, 15000);
+  if (!response.ok) {
+    throw new Error(`Attribution failed: HTTP ${response.status}`);
+  }
+  return response.json();
 }
 
 /**
@@ -214,9 +232,6 @@ export async function fetchGeospatialContext(
 }
 
 
-
-import type { AttributionResult } from "@/types/attribution";
-
 /**
  * Fetch automated cause attribution for an observation (Module 5).
  */
@@ -265,6 +280,60 @@ export async function checkHealth(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Fetch active operational thermal alerts (Module 6).
+ */
+export async function fetchAlerts(
+  minSeverity?: string,
+  limit = 50
+): Promise<AlertListResponse> {
+  const searchParams = new URLSearchParams();
+  if (minSeverity) searchParams.set("min_severity", minSeverity);
+  searchParams.set("limit", String(limit));
+
+  const url = `${API_BASE}/api/alerts?${searchParams.toString()}`;
+  const response = await fetchWithTimeout(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch alerts: HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetch clustered thermal events (Module 4).
+ */
+export async function fetchEvents(params?: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<EventListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.set("status", params.status);
+  searchParams.set("limit", String(params?.limit || 20));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+
+  const url = `${API_BASE}/api/events?${searchParams.toString()}`;
+  const response = await fetchWithTimeout(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch events: HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Build GeoJSON download link.
+ */
+export function getExportGeoJsonUrl(limit = 1000): string {
+  return `${API_BASE}/api/export/geojson?limit=${limit}`;
+}
+
+/**
+ * Build CSV download link.
+ */
+export function getExportCsvUrl(limit = 5000): string {
+  return `${API_BASE}/api/export/csv?limit=${limit}`;
 }
 
 

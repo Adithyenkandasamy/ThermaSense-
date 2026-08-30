@@ -1,14 +1,16 @@
 "use client";
 
 /**
- * MapView — full-page interactive Leaflet map.
+ * MapView — Full-Page Geospatial Intelligence Map.
+ *
+ * Basemap Modes:
+ *   1. 🛰 Satellite Imagery (ESRI World Imagery / NASA GIBS True Color)
+ *   2. 🌙 Dark Intelligence (CartoDB Dark Matter)
+ *   3. 🗺 Topographic / Streets (OpenStreetMap)
  *
  * Layers:
- *   1. OSM base tiles (dark-filtered)
- *   2. NASA FIRMS WMS fire detections (togglable, configurable time window + satellite)
- *   3. Our own ThermalObservation circle markers (color-coded by confidence + FRP)
- *
- * Phase 6: NASA FIRMS Live Map Layer
+ *   - NASA FIRMS WMS Real-Time Fire Detections (High-DPI / Crisp)
+ *   - Clustered Thermal Events & Hotspot Circle Markers
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -20,21 +22,45 @@ import "leaflet/dist/leaflet.css";
 
 export type FirmsTimeWindow = "24h" | "48h" | "7d";
 export type FirmsSatelliteLayer = "noaa20" | "noaa21" | "combined";
+export type BasemapType = "satellite" | "dark" | "streets";
 
 interface FirmsLayerConfig {
   enabled: boolean;
   timeWindow: FirmsTimeWindow;
   satellite: FirmsSatelliteLayer;
+  basemap: BasemapType;
 }
 
 interface MapViewProps {
   hotspots: Hotspot[];
   selectedHotspot: Hotspot | null;
   onSelectHotspot: (hotspot: Hotspot) => void;
+  /** 0–100. Hotspots below this satellite confidence level are hidden. */
+  confidenceThreshold?: number;
 }
 
-// ── FIRMS WMS Layer names ─────────────────────────────────────────────
-// https://firms.modaps.eosdis.nasa.gov/mapserver/wms/
+// ── Basemap Tile Providers ────────────────────────────────────────────
+
+const BASEMAP_TILES: Record<BasemapType, { url: string; attribution: string; maxZoom: number }> = {
+  satellite: {
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution: "© Esri, Maxar, Earthstar Geographics, NASA GIBS",
+    maxZoom: 19,
+  },
+  dark: {
+    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    attribution: "© OpenStreetMap contributors, © CARTO",
+    maxZoom: 20,
+  },
+  streets: {
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "© OpenStreetMap contributors",
+    maxZoom: 19,
+  },
+};
+
+// ── FIRMS WMS Layer Mapping ───────────────────────────────────────────
+
 const FIRMS_LAYER_MAP: Record<FirmsSatelliteLayer, Record<FirmsTimeWindow, string>> = {
   noaa20: {
     "24h": "fires_viirs_noaa20_24",
@@ -53,10 +79,10 @@ const FIRMS_LAYER_MAP: Record<FirmsSatelliteLayer, Record<FirmsTimeWindow, strin
   },
 };
 
-const FIRMS_MAP_KEY = process.env.NEXT_PUBLIC_FIRMS_MAP_KEY ?? "";
+const FIRMS_MAP_KEY = process.env.NEXT_PUBLIC_FIRMS_MAP_KEY ?? "cc9bbdc3216ebdaab31d9b11fbf502a9";
 const FIRMS_WMS_BASE = `https://firms.modaps.eosdis.nasa.gov/mapserver/wms/fires/${FIRMS_MAP_KEY}/`;
 
-// ── Marker helpers ─────────────────────────────────────────────────────
+// ── Marker Styling ────────────────────────────────────────────────────
 
 function getMarkerStyle(hotspot: Hotspot, isSelected: boolean) {
   const confidence = (hotspot.confidence || "").toLowerCase();
@@ -77,10 +103,10 @@ function getMarkerStyle(hotspot: Hotspot, isSelected: boolean) {
   }
 
   let radius = 5;
-  if (frp > 100) radius = 13;
-  else if (frp > 50) radius = 10;
-  else if (frp > 20) radius = 8;
-  else if (frp > 5) radius = 6;
+  if (frp > 100) radius = 12;
+  else if (frp > 50) radius = 9;
+  else if (frp > 20) radius = 7;
+  else if (frp > 5) radius = 5;
 
   if (isSelected) {
     fillColor = "#ffffff";
@@ -92,9 +118,9 @@ function getMarkerStyle(hotspot: Hotspot, isSelected: boolean) {
     radius,
     fillColor,
     color,
-    weight: isSelected ? 2.5 : 1.5,
+    weight: isSelected ? 2.5 : 1.2,
     opacity: 1,
-    fillOpacity: isSelected ? 0.95 : 0.75,
+    fillOpacity: isSelected ? 0.95 : 0.8,
   };
 }
 
@@ -117,7 +143,7 @@ function formatTooltipTime(isoString: string): string {
 function createTooltip(hotspot: Hotspot): string {
   const frpStr =
     hotspot.frp != null
-      ? `<div style="color:#f97316;margin-top:2px">FRP: ${hotspot.frp.toFixed(1)} MW</div>`
+      ? `<div style="color:#f97316;margin-top:2px;font-weight:700">FRP: ${hotspot.frp.toFixed(1)} MW</div>`
       : "";
   return `
     <div style="font-size:12px;font-family:'Inter',sans-serif">
@@ -130,7 +156,7 @@ function createTooltip(hotspot: Hotspot): string {
   `;
 }
 
-// ── Layer Toggle Panel (pure DOM, no React state, inserted into map) ──
+// ── Control Panel HTML Builder ────────────────────────────────────────
 
 function buildLayerControlHTML(cfg: FirmsLayerConfig): string {
   const timeOpts: { value: FirmsTimeWindow; label: string }[] = [
@@ -139,9 +165,14 @@ function buildLayerControlHTML(cfg: FirmsLayerConfig): string {
     { value: "7d", label: "7 Days" },
   ];
   const satOpts: { value: FirmsSatelliteLayer; label: string }[] = [
+    { value: "combined", label: "Combined VIIRS" },
     { value: "noaa20", label: "NOAA-20" },
     { value: "noaa21", label: "NOAA-21" },
-    { value: "combined", label: "Combined" },
+  ];
+  const basemapOpts: { value: BasemapType; label: string }[] = [
+    { value: "satellite", label: "🛰 NASA Satellite" },
+    { value: "dark", label: "🌙 Dark Analytics" },
+    { value: "streets", label: "🗺 Street Map" },
   ];
 
   const timeOptHTML = timeOpts
@@ -156,42 +187,60 @@ function buildLayerControlHTML(cfg: FirmsLayerConfig): string {
         `<option value="${o.value}"${cfg.satellite === o.value ? " selected" : ""}>${o.label}</option>`
     )
     .join("");
+  const basemapOptHTML = basemapOpts
+    .map(
+      (o) =>
+        `<option value="${o.value}"${cfg.basemap === o.value ? " selected" : ""}>${o.label}</option>`
+    )
+    .join("");
 
   return `
     <div id="firms-panel" style="
-      background:rgba(10,14,23,0.93);
-      border:1px solid rgba(255,255,255,0.10);
+      background:rgba(10,14,23,0.92);
+      border:1px solid rgba(255,255,255,0.12);
       border-radius:10px;
       padding:12px 14px;
-      min-width:172px;
+      min-width:185px;
       font-family:'Inter',sans-serif;
-      box-shadow:0 4px 24px rgba(0,0,0,0.5);
-      backdrop-filter:blur(8px);
+      box-shadow:0 8px 32px rgba(0,0,0,0.65);
+      backdrop-filter:blur(10px);
     ">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <span style="font-size:11px;font-weight:700;color:#e8eaf0;letter-spacing:0.04em;text-transform:uppercase">
-          🛰 NASA FIRMS
+      <!-- Basemap Selector -->
+      <div style="margin-bottom:10px">
+        <div style="font-size:10px;color:#94a3b8;margin-bottom:3px;font-weight:600;text-transform:uppercase">Basemap View</div>
+        <select id="basemap-select" style="
+          width:100%;background:#111827;color:#f1f5f9;border:1px solid rgba(255,255,255,0.16);
+          border-radius:6px;padding:5px 7px;font-size:11px;font-weight:600;cursor:pointer;outline:none
+        ">${basemapOptHTML}</select>
+      </div>
+
+      <div style="height:1px;background:rgba(255,255,255,0.08);margin:8px 0"></div>
+
+      <!-- FIRMS WMS Section -->
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:11px;font-weight:700;color:#f8fafc;letter-spacing:0.04em;text-transform:uppercase">
+          🔥 NASA FIRMS WMS
         </span>
         <label style="margin-left:auto;display:flex;align-items:center;cursor:pointer">
           <input
             id="firms-toggle"
             type="checkbox"
             ${cfg.enabled ? "checked" : ""}
-            style="width:14px;height:14px;accent-color:#00d4ff;cursor:pointer"
+            style="width:14px;height:14px;accent-color:#f97316;cursor:pointer"
           />
         </label>
       </div>
 
       <div id="firms-options" style="display:${cfg.enabled ? "flex" : "none"};flex-direction:column;gap:7px">
         <div>
-          <div style="font-size:10px;color:#8892a4;margin-bottom:3px">Time Window</div>
+          <div style="font-size:10px;color:#94a3b8;margin-bottom:3px">Detection Window</div>
           <select id="firms-time" style="
             width:100%;background:#111827;color:#e8eaf0;border:1px solid rgba(255,255,255,0.12);
             border-radius:6px;padding:4px 6px;font-size:11px;cursor:pointer;outline:none
           ">${timeOptHTML}</select>
         </div>
         <div>
-          <div style="font-size:10px;color:#8892a4;margin-bottom:3px">Satellite</div>
+          <div style="font-size:10px;color:#8892a4;margin-bottom:3px">Satellite Sensor</div>
           <select id="firms-sat" style="
             width:100%;background:#111827;color:#e8eaf0;border:1px solid rgba(255,255,255,0.12);
             border-radius:6px;padding:4px 6px;font-size:11px;cursor:pointer;outline:none
@@ -199,33 +248,35 @@ function buildLayerControlHTML(cfg: FirmsLayerConfig): string {
         </div>
 
         <div style="
-          margin-top:2px;padding:5px 7px;background:rgba(0,212,255,0.06);
-          border:1px solid rgba(0,212,255,0.15);border-radius:5px;
-          font-size:10px;color:#8892a4;line-height:1.4
+          margin-top:2px;padding:5px 7px;background:rgba(249,115,22,0.08);
+          border:1px solid rgba(249,115,22,0.2);border-radius:5px;
+          font-size:10px;color:#cbd5e1;line-height:1.4
         ">
-          Live NASA fire detections overlaid on map tiles
+          Live crisp satellite fire detections streamed from NASA servers
         </div>
       </div>
 
-      <div style="margin-top:8px;display:flex;align-items:center;gap:5px">
-        <span style="width:8px;height:8px;border-radius:50%;background:${cfg.enabled ? "#f97316" : "#374151"};display:inline-block;transition:background .2s"></span>
-        <span style="font-size:10px;color:${cfg.enabled ? "#f97316" : "#6b7280"}">
-          ${cfg.enabled ? "Layer active" : "Layer off"}
+      <div style="margin-top:8px;display:flex;align-items:center;gap:6px">
+        <span style="width:7px;height:7px;border-radius:50%;background:${cfg.enabled ? "#f97316" : "#475569"};display:inline-block"></span>
+        <span style="font-size:10px;color:${cfg.enabled ? "#fb923c" : "#64748b"};font-weight:600">
+          ${cfg.enabled ? "NASA WMS Active" : "WMS Inactive"}
         </span>
       </div>
     </div>
   `;
 }
 
-// ── Main component ────────────────────────────────────────────────────
+// ── MapView Component ─────────────────────────────────────────────────
 
 export default function MapView({
   hotspots,
   selectedHotspot,
   onSelectHotspot,
+  confidenceThreshold = 0,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const baseTileRef = useRef<L.TileLayer | null>(null);
   const markersRef = useRef<L.LayerGroup | null>(null);
   const firmsWmsRef = useRef<L.TileLayer.WMS | null>(null);
   const controlDivRef = useRef<HTMLDivElement | null>(null);
@@ -235,8 +286,8 @@ export default function MapView({
     enabled: true,
     timeWindow: "24h",
     satellite: "combined",
+    basemap: "satellite", // Default to NASA Satellite Imagery!
   });
-  // Keep a ref so DOM event handlers always see current value
   const firmsConfigRef = useRef(firmsConfig);
   firmsConfigRef.current = firmsConfig;
 
@@ -244,36 +295,38 @@ export default function MapView({
     selectRef.current = onSelectHotspot;
   }, [onSelectHotspot]);
 
-  // ── Init map (once) ────────────────────────────────────────────────
+  // ── Init Map (once) ────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current as HTMLDivElement & { _leaflet_id?: number };
     if (el._leaflet_id) delete el._leaflet_id;
 
     const map = L.map(el, {
-      center: [20, 0],
-      zoom: 2,
+      center: [20, 10],
+      zoom: 3,
       minZoom: 2,
       maxZoom: 18,
       zoomControl: false,
       attributionControl: false,
     });
 
-    // Base tile layer
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
+    // 1. Initial Basemap (Satellite)
+    const baseCfg = BASEMAP_TILES[firmsConfigRef.current.basemap];
+    const baseLayer = L.tileLayer(baseCfg.url, {
+      attribution: baseCfg.attribution,
+      maxZoom: baseCfg.maxZoom,
     }).addTo(map);
+    baseTileRef.current = baseLayer;
 
-    // Controls
+    // 2. Controls
     L.control.zoom({ position: "bottomright" }).addTo(map);
     L.control.attribution({ position: "bottomleft", prefix: false }).addTo(map);
 
-    // Marker layer group
+    // 3. Marker Layer Group
     const markers = L.layerGroup().addTo(map);
     markersRef.current = markers;
 
-    // ── NASA FIRMS WMS layer ─────────────────────────────────────────
+    // 4. Crisp NASA FIRMS WMS Layer
     if (FIRMS_MAP_KEY) {
       const cfg = firmsConfigRef.current;
       const layerName = FIRMS_LAYER_MAP[cfg.satellite][cfg.timeWindow];
@@ -281,9 +334,9 @@ export default function MapView({
         layers: layerName,
         format: "image/png",
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.92,
+        version: "1.1.1",
         attribution: '🔥 <a href="https://firms.modaps.eosdis.nasa.gov/" target="_blank">NASA FIRMS</a>',
-        // Leaflet defaults to EPSG:3857 which FIRMS WMS supports
       });
 
       if (cfg.enabled) {
@@ -292,7 +345,7 @@ export default function MapView({
       firmsWmsRef.current = wmsLayer;
     }
 
-    // ── Custom layer toggle control ──────────────────────────────────
+    // 5. Custom Control Widget
     const LayerControl = L.Control.extend({
       onAdd() {
         const div = L.DomUtil.create("div", "leaflet-bar leaflet-control");
@@ -300,7 +353,31 @@ export default function MapView({
         L.DomEvent.disableClickPropagation(div);
         L.DomEvent.disableScrollPropagation(div);
 
-        // Wire up toggle checkbox
+        // Basemap change
+        const basemapSelect = div.querySelector<HTMLSelectElement>("#basemap-select");
+        if (basemapSelect) {
+          basemapSelect.addEventListener("change", () => {
+            const newBasemap = basemapSelect.value as BasemapType;
+            setFirmsConfig((prev) => {
+              const next = { ...prev, basemap: newBasemap };
+              firmsConfigRef.current = next;
+
+              // Swap basemap
+              if (baseTileRef.current) map.removeLayer(baseTileRef.current);
+              const bCfg = BASEMAP_TILES[newBasemap];
+              const newBase = L.tileLayer(bCfg.url, {
+                attribution: bCfg.attribution,
+                maxZoom: bCfg.maxZoom,
+              }).addTo(map);
+              newBase.bringToBack();
+              baseTileRef.current = newBase;
+
+              return next;
+            });
+          });
+        }
+
+        // Toggle FIRMS WMS
         const toggle = div.querySelector<HTMLInputElement>("#firms-toggle");
         const options = div.querySelector<HTMLElement>("#firms-options");
         const statusDot = div.querySelector<HTMLElement>("#firms-panel div:last-child span:first-child");
@@ -311,11 +388,11 @@ export default function MapView({
             const newEnabled = toggle.checked;
             if (options) options.style.display = newEnabled ? "flex" : "none";
             if (statusDot) {
-              statusDot.style.background = newEnabled ? "#f97316" : "#374151";
+              statusDot.style.background = newEnabled ? "#f97316" : "#475569";
             }
             if (statusText) {
-              statusText.style.color = newEnabled ? "#f97316" : "#6b7280";
-              statusText.textContent = newEnabled ? "Layer active" : "Layer off";
+              statusText.style.color = newEnabled ? "#fb923c" : "#64748b";
+              statusText.textContent = newEnabled ? "NASA WMS Active" : "WMS Inactive";
             }
 
             setFirmsConfig((prev) => {
@@ -331,7 +408,7 @@ export default function MapView({
           });
         }
 
-        // Wire up time window selector
+        // Time window change
         const timeSelect = div.querySelector<HTMLSelectElement>("#firms-time");
         if (timeSelect) {
           timeSelect.addEventListener("change", () => {
@@ -345,7 +422,7 @@ export default function MapView({
           });
         }
 
-        // Wire up satellite selector
+        // Satellite sensor change
         const satSelect = div.querySelector<HTMLSelectElement>("#firms-sat");
         if (satSelect) {
           satSelect.addEventListener("change", () => {
@@ -367,7 +444,6 @@ export default function MapView({
     new LayerControl({ position: "topright" }).addTo(map);
     mapRef.current = map;
 
-    // Invalidate size after layout
     const t = setTimeout(() => map.invalidateSize(), 200);
 
     return () => {
@@ -376,12 +452,10 @@ export default function MapView({
       mapRef.current = null;
       markersRef.current = null;
       firmsWmsRef.current = null;
+      baseTileRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Update FIRMS WMS when config changes ───────────────────────────
-  // (also called from DOM event handlers above via updateWmsLayer)
   function updateWmsLayer(map: L.Map, cfg: FirmsLayerConfig) {
     const oldWms = firmsWmsRef.current;
     if (oldWms) map.removeLayer(oldWms);
@@ -393,7 +467,8 @@ export default function MapView({
       layers: layerName,
       format: "image/png",
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.92,
+      version: "1.1.1",
       attribution: '🔥 <a href="https://firms.modaps.eosdis.nasa.gov/" target="_blank">NASA FIRMS</a>',
     });
 
@@ -401,7 +476,7 @@ export default function MapView({
     if (cfg.enabled) newWms.addTo(map);
   }
 
-  // ── Update markers when hotspots / selection changes ───────────────
+  // ── Update Observations Markers ─────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     const layer = markersRef.current;
@@ -410,12 +485,45 @@ export default function MapView({
     layer.clearLayers();
     if (hotspots.length === 0) return;
 
+    // ── Confidence threshold mapping ──────────────────────────────────
+    // VIIRS confidence is stored as "low", "nominal", "high"
+    // We map the slider (0–100) to these tiers:
+    //   0–33  → show all (low + nominal + high)
+    //   34–66 → show nominal + high only
+    //   67–100 → show high only
+    const threshold = confidenceThreshold ?? 0;
+    const allowedConfidences = new Set<string>();
+    if (threshold <= 33) {
+      allowedConfidences.add("low").add("l").add("nominal").add("n").add("high").add("h");
+    } else if (threshold <= 66) {
+      allowedConfidences.add("nominal").add("n").add("high").add("h");
+    } else {
+      allowedConfidences.add("high").add("h");
+    }
+
     const latLngs: L.LatLngTuple[] = [];
 
     hotspots.forEach((h) => {
       const lat = Number(h.latitude);
       const lon = Number(h.longitude);
       if (isNaN(lat) || isNaN(lon)) return;
+
+      // ── Confidence filter ─────────────────────────────────────────
+      const conf = (h.confidence || "").toLowerCase();
+      if (!allowedConfidences.has(conf)) return;
+
+      // ── Himalayan snow/glacier false-positive suppression ─────────
+      // Above lat 30°N in the Himalayan/Tibetan zone: only keep observations
+      // with FRP > 15 MW OR high satellite confidence to filter out snow
+      // reflectance artifacts and lone pixel detections in glaciated terrain.
+      const isHighAltitudeHimalayas =
+        lat > 30.0 && lat < 38.0 && lon > 70.0 && lon < 95.0;
+      if (isHighAltitudeHimalayas) {
+        const frp = h.frp ?? 0;
+        const isHighConf = conf === "high" || conf === "h";
+        // Suppress low-FRP non-high-confidence Himalayan pixels
+        if (frp < 15 && !isHighConf) return;
+      }
 
       const isSelected = selectedHotspot?.id === h.id;
       const style = getMarkerStyle(h, isSelected);
@@ -435,7 +543,7 @@ export default function MapView({
       map.invalidateSize();
       map.fitBounds(L.latLngBounds(latLngs), { padding: [50, 50], maxZoom: 9 });
     }
-  }, [hotspots, selectedHotspot]);
+  }, [hotspots, selectedHotspot, confidenceThreshold]);
 
   return (
     <div

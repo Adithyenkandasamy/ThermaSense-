@@ -2,155 +2,105 @@
 
 /**
  * HotspotIntelligencePanel — right-side detail panel.
- * Matches Figma "Hotspot Intelligence" design with:
- * - Region name, coordinates
- * - Likely Cause banner (Wildfire expanding)
- * - Confidence bar
- * - Heat Intensity + Persistence metrics
- * - Supporting Evidence list
- * - Environmental Context grid
- * - Raw detection data rows
+ *
+ * PRIMARY FEATURE: Calls the backend attribution engine to classify every
+ * selected hotspot into one of 4 cause types:
+ *   - vegetation_fire        (Wildfire / Forest Fire)
+ *   - agricultural_burning   (Crop Residue / Stubble Burning)
+ *   - industrial_heat        (Factory / Smelter / Kiln)
+ *   - gas_flare              (Petrochemical / Oil Field Flare)
+ *
+ * The classification result is the FIRST and LARGEST thing the user sees.
  */
 
 import { useState, useEffect } from "react";
 import type { Hotspot } from "@/types/hotspot";
 import type { GeospatialContextResponse, WeatherContextResponse } from "@/types/context";
-import { fetchGeospatialContext, fetchWeather } from "@/services/api";
+import type { AttributionResult, CauseType } from "@/types/attribution";
+import { fetchGeospatialContext, fetchWeather, fetchAttribution } from "@/services/api";
 
 interface Props {
   hotspot: Hotspot | null;
 }
 
-function inferEventType(
-  hotspot: Hotspot,
-  geoContext: GeospatialContextResponse | null
-): {
-  type: string;
+// ── Cause display metadata ────────────────────────────────────────────────────
+const CAUSE_META: Record<CauseType | "unknown", {
   label: string;
+  shortLabel: string;
+  icon: string;
   color: string;
-  bannerBg: string;
-  bannerBorder: string;
-} {
-  const frp = hotspot.frp || 0;
-  const c = (hotspot.confidence || "").toLowerCase();
-  const isDay = hotspot.daynight === "D";
-
-  // Check if near industrial site
-  const hasIndustrial = geoContext && geoContext.industrial.length > 0;
-  const closestIndustrial = geoContext?.industrial[0];
-  if (hasIndustrial && (closestIndustrial?.distance_m || 9999) < 800 && frp > 30) {
-    return {
-      type: "industrial",
-      label: `Industrial Heat (${closestIndustrial?.name || "Facility"})`,
-      color: "#c084fc",
-      bannerBg: "rgba(88,28,135,0.2)",
-      bannerBorder: "rgba(168,85,247,0.3)",
-    };
-  }
-
-  // Check if near cropland
-  const hasCropland = geoContext && geoContext.croplands.length > 0;
-  if (hasCropland && isDay && frp <= 40 && (c === "low" || c === "nominal" || c === "l" || c === "n")) {
-    return {
-      type: "agri",
-      label: "Agricultural Burning",
-      color: "#fde047",
-      bannerBg: "rgba(101,80,12,0.2)",
-      bannerBorder: "rgba(234,179,8,0.3)",
-    };
-  }
-
-  if (frp > 80 || (geoContext && geoContext.forests.length > 0)) {
-    return {
-      type: "wildfire",
-      label: "Wildfire (Expanding)",
-      color: "#fbbf24",
-      bannerBg: "rgba(146,64,14,0.2)",
-      bannerBorder: "rgba(245,158,11,0.3)",
-    };
-  }
-
-  if (frp > 50 && !isDay) {
-    return {
-      type: "industrial",
-      label: "Industrial Heat Source",
-      color: "#c084fc",
-      bannerBg: "rgba(88,28,135,0.2)",
-      bannerBorder: "rgba(168,85,247,0.3)",
-    };
-  }
-
-  return {
-    type: "thermal",
-    label: "Thermal Anomaly",
+  bgColor: string;
+  borderColor: string;
+  description: string;
+}> = {
+  vegetation_fire: {
+    label: "Vegetation Fire / Wildfire",
+    shortLabel: "VEGETATION FIRE",
+    icon: "🔥",
+    color: "#fb923c",
+    bgColor: "rgba(154,52,18,0.25)",
+    borderColor: "rgba(251,146,60,0.5)",
+    description: "Active forest or grassland combustion detected",
+  },
+  agricultural_burning: {
+    label: "Agricultural Burning",
+    shortLabel: "CROP / FIELD BURNING",
+    icon: "🌾",
+    color: "#fde047",
+    bgColor: "rgba(101,80,12,0.25)",
+    borderColor: "rgba(250,204,21,0.5)",
+    description: "Crop residue / stubble burning on farmland",
+  },
+  industrial_heat: {
+    label: "Industrial Heat Source",
+    shortLabel: "INDUSTRIAL HEAT",
+    icon: "🏭",
+    color: "#c084fc",
+    bgColor: "rgba(88,28,135,0.25)",
+    borderColor: "rgba(192,132,252,0.5)",
+    description: "High-temperature emission from factory or smelter",
+  },
+  gas_flare: {
+    label: "Gas Flare",
+    shortLabel: "OIL / GAS FLARE",
+    icon: "🛢️",
+    color: "#f87171",
+    bgColor: "rgba(127,29,29,0.25)",
+    borderColor: "rgba(248,113,113,0.5)",
+    description: "Continuous petrochemical gas flare stack emission",
+  },
+  volcanic_activity: {
+    label: "Volcanic Activity",
+    shortLabel: "VOLCANIC",
+    icon: "🌋",
+    color: "#ef4444",
+    bgColor: "rgba(127,29,29,0.3)",
+    borderColor: "rgba(239,68,68,0.5)",
+    description: "Volcanic eruption or lava flow thermal signature",
+  },
+  unknown: {
+    label: "Unclassified Thermal Anomaly",
+    shortLabel: "THERMAL ANOMALY",
+    icon: "🌡️",
     color: "#67e8f9",
-    bannerBg: "rgba(8,145,178,0.15)",
-    bannerBorder: "rgba(0,212,255,0.25)",
-  };
-}
+    bgColor: "rgba(8,145,178,0.15)",
+    borderColor: "rgba(0,212,255,0.25)",
+    description: "Insufficient data for cause attribution",
+  },
+};
 
-function buildEvidence(
-  hotspot: Hotspot,
-  geoContext: GeospatialContextResponse | null,
-  weather: WeatherContextResponse | null
-): string[] {
-  const ev: string[] = [];
-  const frp = hotspot.frp || 0;
-  const c = (hotspot.confidence || "").toLowerCase();
-
-  // 1. Land Use Evidence
-  if (geoContext && geoContext.forests.length > 0) {
-    const f = geoContext.forests[0];
-    const distStr = f.distance_m ? ` (${Math.round(f.distance_m)}m)` : "";
-    ev.push(`Located near ${f.name || "forest/vegetation"}${distStr}`);
-  } else if (geoContext && geoContext.croplands.length > 0) {
-    const cp = geoContext.croplands[0];
-    const distStr = cp.distance_m ? ` (${Math.round(cp.distance_m)}m)` : "";
-    ev.push(`Adjacent to ${cp.name || "agricultural farmland"}${distStr}`);
-  } else if (geoContext && geoContext.industrial.length > 0) {
-    const ind = geoContext.industrial[0];
-    const distStr = ind.distance_m ? ` (${Math.round(ind.distance_m)}m)` : "";
-    ev.push(`Proximity to ${ind.name || "industrial site"}${distStr}`);
-  } else {
-    ev.push("No industrial source within 2km");
-  }
-
-  // 2. Weather Evidence
-  if (weather && weather.relative_humidity_mean != null) {
-    if (weather.relative_humidity_mean < 30) {
-      ev.push(`Low humidity conditions (${Math.round(weather.relative_humidity_mean)}%)`);
-    } else {
-      ev.push(`Ambient humidity: ${Math.round(weather.relative_humidity_mean)}%`);
-    }
-  } else {
-    ev.push("Low humidity conditions");
-  }
-
-  // 3. FRP / Radiative Power
-  if (frp > 50) {
-    ev.push("Thermal activity expanding");
-  } else if (frp > 15) {
-    ev.push(`Elevated thermal radiation (${frp.toFixed(1)} MW)`);
-  } else {
-    ev.push("Low-intensity localized thermal emission");
-  }
-
-  // 4. Sensor rating & Day/Night
-  if (c === "high" || c === "h") {
-    ev.push("High satellite confidence rating");
-  } else if (hotspot.daynight === "D") {
-    ev.push("Daytime detection confirms active flaming combustion");
-  } else {
-    ev.push("Nighttime thermal detection confirms persistent heat");
-  }
-
-  return ev.slice(0, 4);
-}
-
+const SOURCE_BADGE: Record<string, { label: string; color: string }> = {
+  satellite: { label: "Satellite", color: "#38bdf8" },
+  geospatial: { label: "GIS", color: "#86efac" },
+  weather: { label: "Weather", color: "#fde68a" },
+};
 
 function inferRegion(hotspot: Hotspot): string {
-  const lat = hotspot.latitude;
-  const lon = hotspot.longitude;
+  const { latitude: lat, longitude: lon } = hotspot;
+  if (lat > 28 && lat < 35 && lon > 79 && lon < 82) return "Uttarakhand, India";
+  if (lat > 30 && lat < 32 && lon > 73 && lon < 76) return "Punjab, India";
+  if (lat > 21 && lat < 24 && lon > 84 && lon < 88) return "Jharkhand, India";
+  if (lat > 26 && lat < 28 && lon > 94 && lon < 97) return "Assam, India";
   if (lat > 32 && lat < 42 && lon > -125 && lon < -114) return "Northern California";
   if (lat > 30 && lat < 50 && lon > -130 && lon < -60) return "North America";
   if (lat > 35 && lat < 70 && lon > -10 && lon < 40) return "Central Europe";
@@ -159,84 +109,71 @@ function inferRegion(hotspot: Hotspot): string {
   if (lat > -10 && lat < 35 && lon > 60 && lon < 80) return "Indian Subcontinent";
   if (lat > -35 && lat < 15 && lon > -20 && lon < 55) return "Sub-Saharan Africa";
   if (lat > -45 && lat < -10 && lon > 110 && lon < 155) return "Australia";
-  return `Region ${lat.toFixed(1)}°N, ${lon.toFixed(1)}°E`;
+  return `${Math.abs(lat).toFixed(2)} lat, ${Math.abs(lon).toFixed(2)} lon`;
 }
 
 function formatCoords(hotspot: Hotspot): string {
-
-  const lat = Math.abs(hotspot.latitude).toFixed(2);
-  const lon = Math.abs(hotspot.longitude).toFixed(2);
-  const ns = hotspot.latitude >= 0 ? "N" : "S";
-  const ew = hotspot.longitude >= 0 ? "E" : "W";
-  return `${lat}°${ns}, ${lon}°${ew}`;
-}
-
-function confidencePct(hotspot: Hotspot): number {
-  const c = (hotspot.confidence || "").toLowerCase();
-  if (c === "high" || c === "h") return 94;
-  if (c === "nominal" || c === "n") return 72;
-  return 45;
+  const lat = Math.abs(hotspot.latitude).toFixed(4);
+  const lon = Math.abs(hotspot.longitude).toFixed(4);
+  return `${lat}${hotspot.latitude >= 0 ? "N" : "S"}, ${lon}${hotspot.longitude >= 0 ? "E" : "W"}`;
 }
 
 function formatDatetime(isoString: string): string {
   try {
-    const dt = new Date(isoString);
-    return dt.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
+    return new Date(isoString).toLocaleString("en-US", {
+      month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: false,
     });
-  } catch {
-    return isoString;
-  }
+  } catch { return isoString; }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function HotspotIntelligencePanel({ hotspot }: Props) {
+  const [attribution, setAttribution] = useState<AttributionResult | null>(null);
   const [geoContext, setGeoContext] = useState<GeospatialContextResponse | null>(null);
   const [weather, setWeather] = useState<WeatherContextResponse | null>(null);
-  const [loadingContext, setLoadingContext] = useState(false);
+  const [loadingAttribution, setLoadingAttribution] = useState(false);
+  const [attributionError, setAttributionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hotspot) {
+      setAttribution(null);
       setGeoContext(null);
       setWeather(null);
+      setAttributionError(null);
       return;
     }
 
     let isMounted = true;
-    setLoadingContext(true);
+    setLoadingAttribution(true);
+    setAttribution(null);
+    setAttributionError(null);
 
-    const dateStr =
-      hotspot.acquisition_datetime.split("T")[0] ||
-      new Date().toISOString().split("T")[0];
+    const dateStr = hotspot.acquisition_datetime.split("T")[0] || new Date().toISOString().split("T")[0];
 
     Promise.allSettled([
+      fetchAttribution(hotspot.id),
       fetchGeospatialContext(hotspot.latitude, hotspot.longitude, 2000),
       fetchWeather(hotspot.latitude, hotspot.longitude, dateStr),
-    ]).then(([geoRes, weatherRes]) => {
+    ]).then(([attrRes, geoRes, weatherRes]) => {
       if (!isMounted) return;
-      if (geoRes.status === "fulfilled") {
-        setGeoContext(geoRes.value);
+      if (attrRes.status === "fulfilled") {
+        setAttribution(attrRes.value);
       } else {
-        setGeoContext(null);
+        setAttributionError("Attribution engine could not classify this observation.");
       }
-      if (weatherRes.status === "fulfilled") {
-        setWeather(weatherRes.value);
-      } else {
-        setWeather(null);
-      }
-      setLoadingContext(false);
+      if (geoRes.status === "fulfilled") setGeoContext(geoRes.value);
+      if (weatherRes.status === "fulfilled") setWeather(weatherRes.value);
+      setLoadingAttribution(false);
     });
 
-    return () => {
-      isMounted = false;
-    };
-  }, [hotspot?.id, hotspot?.latitude, hotspot?.longitude, hotspot?.acquisition_datetime]);
+    return () => { isMounted = false; };
+  }, [hotspot?.id, hotspot?.latitude, hotspot?.longitude]);
 
-  const evidenceList = hotspot ? buildEvidence(hotspot, geoContext, weather) : [];
-  const eventCause = hotspot ? inferEventType(hotspot, geoContext) : null;
+  const cause = (attribution?.primary_cause ?? "unknown") as CauseType | "unknown";
+  const meta = CAUSE_META[cause] ?? CAUSE_META.unknown;
+  const confidencePct = attribution ? Math.round(attribution.confidence * 100) : 0;
 
   return (
     <div className="right-panel">
@@ -267,69 +204,168 @@ export default function HotspotIntelligencePanel({ hotspot }: Props) {
         )}
       </div>
 
-      {hotspot && eventCause ? (
+      {hotspot ? (
         <div className="right-panel-body animate-slide-up">
-          {/* Cause Banner */}
-          <div
-            className="cause-banner"
-            style={{ background: eventCause.bannerBg, borderColor: eventCause.bannerBorder }}
-          >
-            <div>
-              <div className="cause-label">Likely Cause</div>
-              <div className="cause-value" style={{ color: eventCause.color }}>
-                🔥 {eventCause.label}
-              </div>
-            </div>
-          </div>
 
-          {/* Confidence Bar */}
-          <div className="conf-section">
-            <div className="conf-row">
-              <span className="conf-bar-label">Confidence</span>
-              <span className="conf-bar-pct">{confidencePct(hotspot)}%</span>
+          {/* ── CLASSIFICATION HERO BLOCK ─────────────────────────────── */}
+          <div style={{
+            margin: "0 0 2px 0",
+            padding: "14px 16px 16px",
+            background: meta.bgColor,
+            borderBottom: `2px solid ${meta.borderColor}`,
+          }}>
+            <div style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: "1.5px",
+              textTransform: "uppercase", color: meta.color,
+              marginBottom: 8, opacity: 0.8,
+            }}>
+              AI Cause Classification
             </div>
-            <div className="conf-bar-track">
-              <div
-                className="conf-bar-fill"
-                style={{ width: `${confidencePct(hotspot)}%` }}
-              />
-            </div>
-          </div>
 
-          {/* Metrics Grid: Heat Intensity + Persistence */}
-          <div className="metrics-grid">
-            <div className="metric-cell">
-              <div className="metric-label">Heat Intensity</div>
-              <div className="metric-value">
-                {hotspot.bright_ti4?.toFixed(1) ?? hotspot.brightness?.toFixed(1) ?? "—"}
-                <span className="metric-unit">K</span>
+            {loadingAttribution ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0" }}>
+                <div style={{
+                  width: 14, height: 14, borderRadius: "50%",
+                  border: `2px solid ${meta.color}`, borderTopColor: "transparent",
+                  animation: "spin 0.8s linear infinite",
+                }} />
+                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Running attribution engine…</span>
               </div>
-            </div>
-            <div className="metric-cell">
-              <div className="metric-label">Persistence</div>
-              <div className="metric-value">
-                {hotspot.frp ? (hotspot.frp / 100).toFixed(1) : "—"}
-                <span className="metric-unit">hrs</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Supporting Evidence */}
-          <div className="evidence-section">
-            <div className="section-title">Supporting Evidence</div>
-            {evidenceList.map((ev, i) => (
-              <div key={i} className="evidence-item">
-                <div className="evidence-check">
-                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: 26 }}>{meta.icon}</span>
+                  <div>
+                    <div style={{
+                      fontSize: 18, fontWeight: 800, color: meta.color,
+                      lineHeight: 1.1, letterSpacing: "0.5px",
+                    }}>
+                      {meta.shortLabel}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                      {meta.description}
+                    </div>
+                  </div>
                 </div>
-                <span>{ev}</span>
-              </div>
-            ))}
+
+                <div>
+                  <div style={{
+                    display: "flex", justifyContent: "space-between",
+                    fontSize: 10, color: "var(--text-muted)", marginBottom: 4,
+                  }}>
+                    <span style={{ fontWeight: 600, letterSpacing: "0.5px", textTransform: "uppercase" }}>
+                      Classification Confidence
+                    </span>
+                    <span style={{ fontWeight: 800, color: meta.color, fontSize: 13 }}>
+                      {confidencePct}%
+                    </span>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%", borderRadius: 3,
+                      width: `${confidencePct}%`,
+                      background: `linear-gradient(90deg, ${meta.color}88, ${meta.color})`,
+                      transition: "width 0.8s ease",
+                    }} />
+                  </div>
+                </div>
+
+                {attributionError && (
+                  <div style={{ fontSize: 10, color: "#f87171", marginTop: 6, opacity: 0.8 }}>
+                    {attributionError}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
-          {/* Environmental Context */}
+          {/* ── ALL CAUSE SCORES ──────────────────────────────────────── */}
+          {attribution && attribution.possible_causes && attribution.possible_causes.length > 1 && (
+            <div style={{ padding: "10px 16px 8px", borderBottom: "1px solid var(--border-subtle)" }}>
+              <div style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: "1px",
+                textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 8,
+              }}>
+                All Cause Scores
+              </div>
+              {attribution.possible_causes.slice(0, 4).map((c) => {
+                const m = CAUSE_META[c.cause as CauseType] ?? CAUSE_META.unknown;
+                const pct = Math.round((c.normalized_score ?? 0) * 100);
+                const isTop = c.cause === cause;
+                return (
+                  <div key={c.cause} style={{ marginBottom: 5 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, marginBottom: 2 }}>
+                      <span style={{ color: isTop ? m.color : "var(--text-muted)", fontWeight: isTop ? 700 : 400 }}>
+                        {m.icon} {m.shortLabel}
+                      </span>
+                      <span style={{ color: isTop ? m.color : "var(--text-muted)", fontWeight: 600 }}>
+                        {pct}%
+                      </span>
+                    </div>
+                    <div style={{ height: 3, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%", borderRadius: 2, width: `${pct}%`,
+                        background: isTop ? m.color : "rgba(255,255,255,0.15)",
+                        transition: "width 0.6s ease",
+                      }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── EVIDENCE CHAIN ────────────────────────────────────────── */}
+          {attribution && attribution.evidence && attribution.evidence.length > 0 && (
+            <div style={{ padding: "10px 16px 10px", borderBottom: "1px solid var(--border-subtle)" }}>
+              <div style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: "1px",
+                textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 8,
+              }}>
+                Multi-Source Evidence Chain
+              </div>
+              {attribution.evidence.slice(0, 6).map((ev, i) => {
+                const badge = SOURCE_BADGE[ev.source] ?? { label: ev.source, color: "#aaa" };
+                const isContradicts = ev.impact === "contradicts";
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 7 }}>
+                    <div style={{
+                      flexShrink: 0, width: 14, height: 14, borderRadius: "50%",
+                      background: isContradicts ? "rgba(239,68,68,0.2)" : "rgba(74,222,128,0.15)",
+                      border: `1px solid ${isContradicts ? "#f87171" : "#4ade80"}`,
+                      display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1,
+                    }}>
+                      <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke={isContradicts ? "#f87171" : "#4ade80"} strokeWidth="3">
+                        {isContradicts
+                          ? <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>
+                          : <polyline points="20 6 9 17 4 12"/>}
+                      </svg>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
+                        <span style={{
+                          fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3,
+                          background: `${badge.color}22`, color: badge.color,
+                          border: `1px solid ${badge.color}44`,
+                          letterSpacing: "0.5px", textTransform: "uppercase",
+                        }}>
+                          {badge.label}
+                        </span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-primary)" }}>
+                          {ev.factor}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.4 }}>
+                        {ev.value}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── ENVIRONMENTAL CONTEXT ─────────────────────────────────── */}
           <div className="env-section">
             <div className="section-title">Environmental Context</div>
             <div className="env-grid">
@@ -338,31 +374,27 @@ export default function HotspotIntelligencePanel({ hotspot }: Props) {
                 <span>
                   {weather?.temperature_max != null
                     ? `${Math.round(weather.temperature_max)}°C`
-                    : hotspot.bright_ti5
-                      ? `${(hotspot.bright_ti5 - 273).toFixed(0)}°C`
-                      : "32°C"}
+                    : hotspot.bright_ti5 ? `${(hotspot.bright_ti5 - 273).toFixed(0)}°C` : "—"}
                 </span>
               </div>
               <div className="env-cell">
                 <span className="env-icon">💧</span>
                 <span>
                   {weather?.relative_humidity_mean != null
-                    ? `${Math.round(weather.relative_humidity_mean)}%`
-                    : "18%"}
+                    ? `${Math.round(weather.relative_humidity_mean)}%` : "—"}
                 </span>
               </div>
               <div className="env-cell full-width">
                 <span className="env-icon">💨</span>
                 <span>
                   {weather?.wind_speed_max != null
-                    ? `${Math.round(weather.wind_speed_max)} km/h`
-                    : "15 km/h"}
+                    ? `${Math.round(weather.wind_speed_max)} km/h` : "—"}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Raw data rows */}
+          {/* ── RAW DATA ─────────────────────────────────────────────── */}
           <div style={{ borderTop: "1px solid var(--border-subtle)" }}>
             <div style={{ padding: "10px 16px 6px", fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "var(--text-muted)" }}>
               Raw Detection Data
@@ -372,8 +404,10 @@ export default function HotspotIntelligencePanel({ hotspot }: Props) {
               { label: "Instrument", value: hotspot.instrument },
               { label: "Acquired", value: formatDatetime(hotspot.acquisition_datetime) },
               { label: "FRP", value: hotspot.frp != null ? `${hotspot.frp.toFixed(1)} MW` : "—" },
+              { label: "Brightness", value: hotspot.bright_ti4 != null ? `${hotspot.bright_ti4.toFixed(1)} K` : hotspot.brightness != null ? `${hotspot.brightness.toFixed(1)} K` : "—" },
               { label: "Day/Night", value: hotspot.daynight === "D" ? "Day" : hotspot.daynight === "N" ? "Night" : "—" },
               { label: "Source", value: hotspot.source },
+              { label: "Obs ID", value: hotspot.id?.slice(0, 8) + "…" },
             ].map(({ label, value }) => (
               <div key={label} className="detail-row">
                 <span className="detail-row-label">{label}</span>
@@ -381,6 +415,7 @@ export default function HotspotIntelligencePanel({ hotspot }: Props) {
               </div>
             ))}
           </div>
+
         </div>
       ) : (
         <div className="panel-empty">
@@ -391,14 +426,12 @@ export default function HotspotIntelligencePanel({ hotspot }: Props) {
             </svg>
           </div>
           <p className="panel-empty-text">
-            Click any hotspot marker on the map to view detailed thermal intelligence.
+            Click any hotspot marker on the map to view the AI cause classification and evidence chain.
           </p>
         </div>
       )}
 
-      {/* Help button */}
       <button className="help-btn" aria-label="Help">?</button>
     </div>
   );
 }
-

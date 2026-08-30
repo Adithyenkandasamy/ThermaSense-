@@ -8,6 +8,7 @@
 import { useRef } from "react";
 import type { SatelliteSource, Hotspot, RegionOption } from "@/types/hotspot";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import { getExportGeoJsonUrl, getExportCsvUrl } from "@/services/api";
 
 interface LeftSidebarProps {
   satellites: SatelliteSource[];
@@ -197,6 +198,64 @@ export default function LeftSidebar({
             {error}
           </div>
         )}
+      </div>
+
+      {/* GIS Data Export Hub */}
+      <div className="sidebar-section">
+        <div className="sidebar-label">GIS & Data Export</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <a
+            href={getExportGeoJsonUrl(2000)}
+            target="_blank"
+            rel="noopener noreferrer"
+            download
+            className="export-btn"
+            style={{
+              flex: 1,
+              padding: "7px 8px",
+              background: "rgba(0, 212, 255, 0.08)",
+              border: "1px solid rgba(0, 212, 255, 0.25)",
+              borderRadius: "var(--radius-sm)",
+              color: "#00d4ff",
+              fontSize: 11,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 5,
+              textDecoration: "none",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <span>🌍</span> GeoJSON
+          </a>
+
+          <a
+            href={getExportCsvUrl(5000)}
+            target="_blank"
+            rel="noopener noreferrer"
+            download
+            className="export-btn"
+            style={{
+              flex: 1,
+              padding: "7px 8px",
+              background: "rgba(255, 255, 255, 0.05)",
+              border: "1px solid rgba(255, 255, 255, 0.12)",
+              borderRadius: "var(--radius-sm)",
+              color: "#e2e8f0",
+              fontSize: 11,
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 5,
+              textDecoration: "none",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <span>📊</span> CSV
+          </a>
+        </div>
       </div>
 
       {/* Event Legend */}
