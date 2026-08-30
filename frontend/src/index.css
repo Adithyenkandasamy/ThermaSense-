@@ -1,0 +1,145 @@
+/* ── Reset + root ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #0a0a0f;
+  --bg-panel:    #111118;
+  --bg-card:     #16161f;
+  --bg-hover:    #1e1e2a;
+  --border:      #2a2a3a;
+  --border-lite: #1e1e28;
+
+  --text:        #e8e8f0;
+  --text-muted:  #7878a0;
+  --text-dim:    #4a4a6a;
+
+  --cyan:        #00d4d8;
+  --cyan-dim:    #00d4d820;
+  --cyan-border: #00d4d840;
+
+  --low:     #4ade80;
+  --mod:     #facc15;
+  --high:    #f97316;
+  --extreme: #ef4444;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+  font-family: 'Inter', 'JetBrains Mono', 'Cascadia Code', monospace, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body { overflow: hidden; height: 100vh; width: 100vw; }
+#root { height: 100vh; display: flex; flex-direction: column; }
+
+/* ── Typography ─────────────────────────────────────────────────────────────── */
+h1 { font-size: 16px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+h2 { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); }
+h3 { font-size: 12px; font-weight: 600; }
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Risk colours ───────────────────────────────────────────────────────────── */
+.risk-LOW      { color: var(--low);     }
+.risk-MODERATE { color: var(--mod);     }
+.risk-HIGH     { color: var(--high);    }
+.risk-EXTREME  { color: var(--extreme); }
+
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.badge-LOW      { background: #4ade8022; color: var(--low);     border: 1px solid #4ade8044; }
+.badge-MODERATE { background: #facc1522; color: var(--mod);     border: 1px solid #facc1544; }
+.badge-HIGH     { background: #f9731622; color: var(--high);    border: 1px solid #f9731644; }
+.badge-EXTREME  { background: #ef444422; color: var(--extreme); border: 1px solid #ef444455; }
+.badge-DEMO     { background: #00d4d820; color: var(--cyan);    border: 1px solid var(--cyan-border); }
+.badge-LIVE     { background: #4ade8015; color: var(--low);     border: 1px solid #4ade8030; }
+
+/* ── Buttons ────────────────────────────────────────────────────────────────── */
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  font: inherit;
+  transition: opacity 0.15s, background 0.15s;
+}
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--cyan);
+  color: #000;
+  padding: 8px 16px;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+.btn-primary:hover:not(:disabled) { opacity: 0.85; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 11px;
+}
+.btn-ghost:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+
+.btn-danger {
+  background: #ef444422;
+  color: var(--extreme);
+  border: 1px solid #ef444440;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.btn-danger:hover:not(:disabled) { background: #ef444433; }
+
+/* ── Form inputs ────────────────────────────────────────────────────────────── */
+select, input[type="number"], input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+}
+select:focus, input:focus { border-color: var(--cyan); }
+label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; display: block; }
+
+/* ── Divider ────────────────────────────────────────────────────────────────── */
+.divider { border: none; border-top: 1px solid var(--border-lite); margin: 10px 0; }
+
+/* ── Spinner ────────────────────────────────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ── Leaflet map overrides ──────────────────────────────────────────────────── */
+.leaflet-container { background: #0d0d14 !important; }
+.leaflet-tile { filter: brightness(0.45) saturate(0.3) hue-rotate(180deg); }
+.leaflet-control-attribution { display: none !important; }
+.leaflet-control-zoom a {
+  background: var(--bg-card) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--border) !important;
+}

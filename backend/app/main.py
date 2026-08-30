@@ -40,12 +40,42 @@ async def _scheduled_ingest() -> None:
             logger.error("Scheduled ingestion failed: %s", exc)
 
 
+async def _sync_facilities_on_startup() -> None:
+    """
+    Synchronise industrial facilities from Overpass (or demo fallback) once at startup.
+
+    Failures are logged but never crash the application — the scheduler
+    and ingestion pipeline will still start normally.
+    """
+    from app.database import AsyncSessionLocal
+    from app.ingestion.facilities import sync_facilities
+
+    logger.info("Running facility sync on startup...")
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await sync_facilities(session)
+            await session.commit()
+            logger.info(
+                "Startup facility sync complete — source=%s inserted=%d skipped=%d",
+                result.get("source"),
+                result.get("inserted", 0),
+                result.get("skipped_duplicates", 0),
+            )
+    except Exception as exc:
+        logger.error(
+            "Startup facility sync failed (non-fatal): %s — "
+            "facility context will rely on existing DB data or demo fallback.",
+            exc,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
 
     Startup:
+      - Synchronise industrial facilities (Overpass → demo fallback on failure)
       - Start APScheduler for background FIRMS polling
       - Run an immediate first ingestion so data is ready right away
 
@@ -53,6 +83,11 @@ async def lifespan(app: FastAPI):
       - Stop the scheduler cleanly
     """
     # ── Startup ────────────────────────────────────────────────────
+
+    # 1. Facility sync — runs once, non-fatal on Overpass failure
+    await _sync_facilities_on_startup()
+
+    # 2. Start the scheduler
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         _scheduled_ingest,
@@ -68,7 +103,7 @@ async def lifespan(app: FastAPI):
         settings.poll_interval_minutes,
     )
 
-    # Immediate first fetch on startup
+    # 3. Immediate first fetch on startup
     logger.info("Running initial FIRMS ingestion on startup...")
     await _scheduled_ingest()
 

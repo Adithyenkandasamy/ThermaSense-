@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ingestion.landcover import lookup_land_cover
+from app.ingestion.landcover import lookup_land_cover_async
 from app.models.thermal_event import IndustrialFacility, ThermalEvent
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,12 @@ async def build_event_context(
     nearest_km = nearby[0]["distance_km"] if nearby else None
 
     # ── Land cover ─────────────────────────────────────────────────────
-    land_cover = lookup_land_cover(lat, lon)
+    try:
+        land_cover_result = await lookup_land_cover_async(lat, lon)
+        land_cover = land_cover_result.get("land_cover") or "UNKNOWN"
+    except Exception as exc:
+        logger.error("Land-cover lookup failed for event %s: %s", event.id, exc)
+        land_cover = "UNKNOWN"
 
     logger.debug(
         "Context for event %s: %d nearby facilities within %.1f km, land_cover=%s",

@@ -41,6 +41,8 @@ class ThermalEventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    external_id: str | None = None
+    source: str
     latitude: float
     longitude: float
     acq_date: date
@@ -71,6 +73,7 @@ class ThermalEventSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    source: str = "VIIRS_SNPP_NRT"
     latitude: float
     longitude: float
     acq_date: date
