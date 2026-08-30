@@ -1,22 +1,29 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "ThermaSense — Geospatial Thermal Intelligence",
+  title: "ThermaSense",
   description:
-    "Satellite thermal anomaly detection and investigation platform. Powered by NASA FIRMS data from NOAA-20 and NOAA-21 VIIRS instruments.",
+    "Geospatial Thermal Intelligence — satellite thermal anomaly detection and investigation platform powered by NASA FIRMS data.",
+  icons: {
+    icon: [
+      { url: "/favicon.png", type: "image/png", sizes: "256x256" },
+      { url: "/favicon.ico", type: "image/x-icon" },
+    ],
+    shortcut: "/favicon.png",
+    apple: "/favicon.png",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`}>
-      <body className="min-h-full bg-slate-950 text-slate-200 font-[family-name:var(--font-inter)]">
+    <html lang="en" className="h-full antialiased">
+      <head>
+        <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
+        <link rel="shortcut icon" href="/favicon.ico" />
+        <link rel="apple-touch-icon" href="/favicon.png" />
+      </head>
+      <body style={{ fontFamily: "Inter, 'Segoe UI', sans-serif" }}>
         {children}
       </body>
     </html>

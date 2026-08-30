@@ -5,6 +5,16 @@
 /** Satellite source identifiers */
 export type SatelliteSource = "NOAA-20" | "NOAA-21";
 
+/** Monitored geographic regions */
+export type RegionOption = "all" | "mediterranean" | "india" | "california";
+
+export const REGION_BBOXES: Record<RegionOption, string | undefined> = {
+  all: undefined,
+  mediterranean: "-10,35,35,45",
+  india: "68,6,98,37",
+  california: "-125,32,-114,42",
+};
+
 /** A single thermal hotspot observation from FIRMS */
 export interface Hotspot {
   id: string;

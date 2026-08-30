@@ -114,6 +114,7 @@ async def list_observations(
                 confidence=obs.confidence,
                 daynight=obs.daynight,
                 observation_hash=obs.observation_hash,
+                event_id=str(obs.event_id) if obs.event_id else None,
                 created_at=obs.created_at,
                 updated_at=obs.updated_at,
             )
@@ -165,6 +166,7 @@ async def get_observation(
         confidence=obs.confidence,
         daynight=obs.daynight,
         observation_hash=obs.observation_hash,
+        event_id=str(obs.event_id) if obs.event_id else None,
         created_at=obs.created_at,
         updated_at=obs.updated_at,
     )

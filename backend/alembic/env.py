@@ -20,6 +20,7 @@ if config.config_file_name is not None:
 from app.core.config import get_settings
 from app.core.database import Base
 import app.models.thermal_observation
+import app.models.thermal_event
 import app.models.ingestion_log
 
 target_metadata = Base.metadata

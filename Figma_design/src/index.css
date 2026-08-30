@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --color-background: #0d1117;
+  --color-foreground: #e6edf3;
+  --color-panel: rgba(22, 27, 34, 0.65);
+  --color-panel-border: rgba(255, 255, 255, 0.08);
+  --color-primary: #00d2ff;
+  --color-primary-foreground: #000000;
+  --color-accent-fire: #ff5500;
+  --color-accent-muted: #8b949e;
+  
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'Space Mono', monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    background: var(--color-panel);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--color-panel-border);
+    box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.5);
+  }
+}

@@ -127,6 +127,9 @@ class ObservationResponse(BaseModel):
     confidence: Optional[str] = None
     daynight: Optional[str] = None
     observation_hash: str
+    event_id: Optional[str] = Field(
+        None, description="UUID of the ThermalEvent this observation belongs to (null if unassigned)"
+    )
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

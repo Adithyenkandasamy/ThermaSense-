@@ -311,13 +311,19 @@ thermasense/
 
 ## API Endpoints
 
-| Method | Endpoint                | Description                        |
-| ------ | ----------------------- | ---------------------------------- |
-| GET    | `/health`               | Service health check               |
-| GET    | `/api/hotspots`         | Fetch thermal observations         |
-| GET    | `/api/hotspots/{id}`    | Get specific observation           |
-| POST   | `/api/ingestion/firms`  | Trigger FIRMS data fetch           |
-| GET    | `/api/context/weather`  | Fetch weather context for location |
+| Method | Endpoint                    | Description                                  |
+| ------ | --------------------------- | -------------------------------------------- |
+| GET    | `/health`                   | Service health check                         |
+| GET    | `/api/hotspots`             | Fetch thermal observations (NASA FIRMS API)  |
+| GET    | `/api/hotspots/{id}`        | Get specific observation                     |
+| POST   | `/api/ingestion/firms`      | Trigger manual FIRMS ingestion               |
+| GET    | `/api/observations`         | List stored database observations            |
+| GET    | `/api/observations/{id}`    | Get stored observation by ID                 |
+| GET    | `/api/monitoring/status`    | Ingestion scheduler status & health          |
+| GET    | `/api/monitoring/logs`      | Ingestion run history logs (paginated)       |
+| POST   | `/api/monitoring/run`       | Trigger scheduled ingestion cycle manually   |
+| GET    | `/api/context/weather`      | Hourly weather context for observation       |
+| GET    | `/api/context/geospatial`   | OpenStreetMap land use & nearby features     |
 
 ### Example: Fetch Hotspots
 
@@ -328,8 +334,15 @@ curl "http://localhost:8000/api/hotspots?satellite=NOAA-20&days=1"
 ### Example: Fetch Weather Context
 
 ```bash
-curl "http://localhost:8000/api/context/weather?latitude=37.7749&longitude=-122.4194&date=2025-08-28"
+curl "http://localhost:8000/api/context/weather?latitude=37.7749&longitude=-122.4194&acquisition_datetime=2026-08-29T12:00:00Z"
 ```
+
+### Example: Fetch Geospatial Land Use Context
+
+```bash
+curl "http://localhost:8000/api/context/geospatial?latitude=37.7749&longitude=-122.4194&radius_m=2000"
+```
+
 
 ---
 

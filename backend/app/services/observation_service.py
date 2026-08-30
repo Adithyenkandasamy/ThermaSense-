@@ -140,12 +140,22 @@ async def ingest_firms_data(
             session, observation_dicts
         )
 
-        # ── Step 5: Update ingestion log ─────────────────────────
+        # ── Step 5: Automatically cluster unassigned observations ──
+        if stored > 0:
+            try:
+                from app.services import clustering_service
+                clustering_summary = await clustering_service.cluster_unassigned_observations(session)
+                logger.info("Auto-clustering after ingestion: %s", clustering_summary)
+            except Exception as cluster_err:
+                logger.warning("Clustering post-ingestion error: %s", cluster_err)
+
+        # ── Step 6: Update ingestion log ─────────────────────────
         await ingestion_repository.update_ingestion_log(
             session,
             log.id,
             status="success",
             records_fetched=fetched_count,
+            records_validated=len(valid_obs),
             records_stored=stored,
             duplicates_skipped=duplicates,
             invalid_records=invalid_count,
@@ -214,3 +224,36 @@ async def list_observations(
         limit=limit,
         offset=offset,
     )
+
+
+async def list_ingestion_logs(
+    session: AsyncSession,
+    *,
+    source: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Paginated, filterable ingestion log listing."""
+    return await ingestion_repository.list_ingestion_logs(
+        session,
+        source=source,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+async def get_latest_ingestion_log(
+    session: AsyncSession,
+):
+    """Retrieve the most recent ingestion log."""
+    return await ingestion_repository.get_latest_ingestion_log(session)
+
+
+async def get_latest_successful_ingestion_log(
+    session: AsyncSession,
+):
+    """Retrieve the most recent successful ingestion log."""
+    return await ingestion_repository.get_latest_successful_ingestion_log(session)
+

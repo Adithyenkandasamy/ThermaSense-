@@ -63,52 +63,57 @@ The backend returns clear error messages when:
 ---
 
 ## Open-Meteo
-
+ 
 ### Overview
-
-Weather context is fetched from the [Open-Meteo API](https://open-meteo.com/).
+ 
+Hourly weather context is fetched from the [Open-Meteo API](https://open-meteo.com/) matching the exact observation acquisition timestamp.
 No API key is required.
-
+ 
 ### Endpoint
-
+ 
 ```
-GET /api/context/weather?latitude={lat}&longitude={lon}&date={YYYY-MM-DD}
+GET /api/context/weather?latitude={lat}&longitude={lon}&acquisition_datetime={ISO8601_UTC}
 ```
-
+ 
 ### Data Returned
-
-- Temperature (max/min)
-- Apparent temperature
-- Precipitation
-- Wind speed and direction
-- Weather code (WMO)
-
+ 
+- Temperature (`temperature`, °C)
+- Relative Humidity (`relative_humidity`, %)
+- Wind Speed (`wind_speed`, km/h)
+- Wind Direction (`wind_direction`, degrees)
+- Precipitation (`precipitation`, mm)
+- Weather Timestamp (`weather_timestamp`, hourly UTC bucket)
+- Source (`open-meteo`)
+ 
 ### API Selection
-
-- Dates within the last 7 days use the **Forecast API**
-- Older dates use the **Archive API**
-
+ 
+- Observations within the last 92 days use the **Forecast API**
+- Older observations use the historical **Archive API**
+ 
 ---
-
-## OpenStreetMap / Overpass (Future)
-
-### Planned Integration
-
-The `geospatial_service.py` defines interfaces for querying
-nearby geographic features:
-
-- Industrial areas
-- Buildings
-- Roads
-- Forests / vegetation
-- General land use
-
-### Overpass API
-
+ 
+## OpenStreetMap / Overpass
+ 
+### Overview
+ 
+The `geospatial_service.py` provides real-time land use and infrastructure context around thermal observations using OpenStreetMap data via the Overpass API:
+ 
+- **Industrial areas & facilities**: `landuse=industrial`, `man_made=flare`, `power=plant`
+- **Forests & vegetation**: `landuse=forest`, `natural=wood`
+- **Agricultural farmlands**: `landuse=farmland`, `landuse=orchard`, `landuse=farmyard`
+- **Roads & transport corridors**: `highway=motorway|trunk|primary|secondary`
+- **Buildings**: `building=*`
+ 
+### Endpoint
+ 
+```
+GET /api/context/geospatial?latitude={lat}&longitude={lon}&radius_m=2000
+```
+ 
+### Overpass API Target
+ 
 ```
 https://overpass-api.de/api/interpreter
 ```
-
-This integration is not yet implemented. The service skeleton
-is ready for Overpass query integration without changing any
-other service modules.
+ 
+Features are returned with Haversine distance in meters from the anomaly point and cached for 1 hour using coordinate rounding keys to prevent rate limiting.

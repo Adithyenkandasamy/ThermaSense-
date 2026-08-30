@@ -74,6 +74,26 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+@asynccontextmanager
+async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Async context manager for DB sessions outside of request lifecycle (e.g. scheduler).
+
+    Usage:
+        async with get_db_context() as session:
+            ...
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+
 async def init_db() -> None:
     """Initialize the database engine (called on app startup)."""
     engine = _get_engine()

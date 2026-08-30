@@ -3,161 +3,176 @@
 /**
  * ThermaSense — Main application page.
  *
- * Composes the interactive map, sidebar controls,
- * and hotspot detail panel into a full-page dashboard.
+ * Layout matches Figma design:
+ *   [TopNav]
+ *   [LeftSidebar | StatsBar + Map + RecentEvents | HotspotIntelligencePanel]
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
-import type { SatelliteSource, Hotspot } from "@/types/hotspot";
+import type { SatelliteSource, Hotspot, RegionOption } from "@/types/hotspot";
+import { REGION_BBOXES } from "@/types/hotspot";
 import { fetchHotspots } from "@/services/api";
-import Sidebar from "@/features/dashboard/Sidebar";
-import HotspotPanel from "@/features/hotspots/HotspotPanel";
+
+// Components
+import TopNav from "@/components/TopNav";
+import LeftSidebar from "@/features/dashboard/LeftSidebar";
+import StatsBar from "@/features/dashboard/StatsBar";
+import RecentEventsOverlay from "@/features/map/RecentEventsOverlay";
+import HotspotIntelligencePanel from "@/features/hotspots/HotspotIntelligencePanel";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
-// Dynamic import for Leaflet (no SSR — requires window)
+// Leaflet: no SSR
 const MapView = dynamic(() => import("@/features/map/MapView"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-slate-950">
-      <LoadingSpinner size="lg" message="Loading map..." />
+    <div style={{
+      width: "100%", height: "100%",
+      background: "#0a0e17",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <LoadingSpinner size="lg" message="Initializing map..." />
     </div>
   ),
 });
 
 export default function Home() {
-  // ── State ───────────────────────────────────────────────
+  // ── State ──────────────────────────────────────────────
   const [satellites, setSatellites] = useState<SatelliteSource[]>(["NOAA-20"]);
   const [dayRange, setDayRange] = useState<number>(1);
+  const [region, setRegion] = useState<RegionOption>("all");
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(80);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const [selectedHotspot, setSelectedHotspot] = useState<Hotspot | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [lastFetched, setLastFetched] = useState<Date | null>(null);
 
-  // ── Fetch handler ───────────────────────────────────────
+  // ── Fetch handler ──────────────────────────────────────
   const handleFetch = useCallback(async () => {
     setLoading(true);
     setError(null);
     setSelectedHotspot(null);
 
     try {
-      // Fetch from each selected satellite source
-      const allObservations: Hotspot[] = [];
-
+      const all: Hotspot[] = [];
+      const bbox = REGION_BBOXES[region];
       for (const sat of satellites) {
-        const response = await fetchHotspots({
-          satellite: sat,
-          days: dayRange,
-        });
-        allObservations.push(...response.observations);
+        const res = await fetchHotspots({ satellite: sat, days: dayRange, bbox });
+        all.push(...res.observations);
       }
+      setHotspots(all);
+      setLastFetched(new Date());
 
-      setHotspots(allObservations);
-
-      if (allObservations.length === 0) {
-        setError(
-          "No thermal observations found for the selected parameters. Try a wider date range."
-        );
+      if (all.length === 0) {
+        setError("No thermal observations found. Try a wider date range or different satellite.");
       }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "An unexpected error occurred";
-      setError(message);
+      const msg = err instanceof Error ? err.message : "Unexpected error";
+      setError(msg);
       setHotspots([]);
     } finally {
       setLoading(false);
-      setSidebarOpen(false); // Close sidebar on mobile after fetch
     }
-  }, [satellites, dayRange]);
+  }, [satellites, dayRange, region]);
 
-  // ── Marker click handler ────────────────────────────────
-  const handleSelectHotspot = useCallback((hotspot: Hotspot) => {
-    setSelectedHotspot((prev) =>
-      prev?.id === hotspot.id ? null : hotspot
-    );
+  // Initial load
+  useEffect(() => {
+    handleFetch();
+  }, [handleFetch]);
+
+  // ── Select handler ─────────────────────────────────────
+  const handleSelect = useCallback((h: Hotspot) => {
+    setSelectedHotspot((prev) => (prev?.id === h.id ? null : h));
   }, []);
 
-  const handleClosePanel = useCallback(() => {
-    setSelectedHotspot(null);
-  }, []);
+  const handleClose = useCallback(() => setSelectedHotspot(null), []);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden">
-      {/* Sidebar */}
-      <Sidebar
-        satellites={satellites}
-        onSatellitesChange={setSatellites}
-        dayRange={dayRange}
-        onDayRangeChange={setDayRange}
-        onFetch={handleFetch}
-        loading={loading}
-        error={error}
-        hotspots={hotspots}
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-      />
+    <div className="app-shell">
+      {/* Top Navigation */}
+      <TopNav hotspotsCount={hotspots.length} lastFetched={lastFetched} />
 
-      {/* Map — offset by sidebar width on large screens */}
-      <div className="h-full w-full lg:pl-80">
-        <MapView
+      {/* Body */}
+      <div className="app-body">
+        {/* Left Sidebar */}
+        <LeftSidebar
+          satellites={satellites}
+          onSatellitesChange={setSatellites}
+          dayRange={dayRange}
+          onDayRangeChange={setDayRange}
+          region={region}
+          onRegionChange={setRegion}
+          confidenceThreshold={confidenceThreshold}
+          onConfidenceChange={setConfidenceThreshold}
+          onFetch={handleFetch}
+          loading={loading}
+          error={error}
           hotspots={hotspots}
-          selectedHotspot={selectedHotspot}
-          onSelectHotspot={handleSelectHotspot}
         />
-      </div>
 
-      {/* Hotspot detail panel */}
-      {selectedHotspot && (
-        <HotspotPanel
-          hotspot={selectedHotspot}
-          onClose={handleClosePanel}
-        />
-      )}
+        {/* Center: Stats + Map */}
+        <div className="center-content">
+          {/* Stats Bar */}
+          <StatsBar hotspots={hotspots} />
+
+          {/* Map + Overlays */}
+          <div className="map-container">
+            <MapView
+              hotspots={hotspots}
+              selectedHotspot={selectedHotspot}
+              onSelectHotspot={handleSelect}
+            />
+
+            {/* Recent Events overlay */}
+            <RecentEventsOverlay hotspots={hotspots} onSelect={handleSelect} />
+
+            {/* Empty state */}
+            {!loading && hotspots.length === 0 && !error && (
+              <div className="map-empty-state">
+                <div className="map-empty-card">
+                  <div style={{ marginBottom: 14, display: "flex", justifyContent: "center" }}>
+                    <div style={{
+                      width: 52, height: 52, borderRadius: 13,
+                      background: "var(--bg-elevated)",
+                      border: "1px solid var(--border-subtle)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      color: "var(--text-muted)",
+                    }}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                      </svg>
+                    </div>
+                  </div>
+                  <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
+                    Ready to Explore
+                  </h2>
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                    Configure satellite source and date range in the sidebar, then click{" "}
+                    <span style={{ color: "var(--cyan)", fontWeight: 600 }}>Fetch Thermal Data</span>.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Panel — Hotspot Intelligence */}
+        <HotspotIntelligencePanel hotspot={selectedHotspot} />
+      </div>
 
       {/* Loading overlay */}
       {loading && (
-        <div className="fixed inset-0 z-[998] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm lg:pl-80">
-          <div className="rounded-2xl bg-slate-900/90 border border-slate-700/50 px-8 py-6 shadow-2xl">
-            <LoadingSpinner
-              size="lg"
-              message="Fetching thermal data from NASA FIRMS..."
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Empty state (no data yet) */}
-      {!loading && hotspots.length === 0 && !error && (
-        <div className="fixed inset-0 z-[10] pointer-events-none flex items-center justify-center lg:pl-80">
-          <div className="text-center pointer-events-auto">
-            <div className="mb-4 flex justify-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-800/60 border border-slate-700/40">
-                <svg
-                  className="w-8 h-8 text-slate-500"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
-                  />
-                </svg>
-              </div>
+        <div className="loading-overlay">
+          <div className="loading-card">
+            <div className="spinner" />
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)" }}>
+              Fetching Thermal Data
             </div>
-            <h2 className="text-lg font-semibold text-slate-300 mb-1">
-              Ready to Explore
-            </h2>
-            <p className="text-sm text-slate-500 max-w-xs">
-              Select a satellite source and date range, then click{" "}
-              <span className="text-cyan-400 font-medium">
-                Fetch Thermal Data
-              </span>{" "}
-              to view observations.
-            </p>
+            <div className="loading-text" style={{ fontSize: 11 }}>
+              Connecting to NASA FIRMS...
+            </div>
           </div>
         </div>
       )}

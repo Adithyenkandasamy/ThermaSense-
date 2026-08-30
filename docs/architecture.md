@@ -85,21 +85,26 @@ automatically be considered duplicates. They are independent evidence.
 Each service is isolated in its own file and can be extended
 independently:
 
-| Service             | File                     | Status       |
-| ------------------- | ------------------------ | ------------ |
-| FIRMS Integration   | `firms_service.py`       | Implemented  |
-| Weather Context     | `weather_service.py`     | Implemented  |
-| Geospatial Context  | `geospatial_service.py`  | Placeholder  |
-| Event Clustering    | *(future)*               | Not started  |
-| Attribution Engine  | *(future)*               | Not started  |
-| Historical Analysis | *(future)*               | Not started  |
+| Service                  | File                      | Status       |
+| ------------------------ | ------------------------- | ------------ |
+| FIRMS Integration        | `firms_service.py`        | Implemented  |
+| Database Persistence     | `observation_service.py`  | Implemented  |
+| Deduplication Engine     | `observation_normalizer.py`| Implemented |
+| Ingestion Logging        | `ingestion_repository.py` | Implemented  |
+| Monitoring Scheduler     | `firms_scheduler.py`      | Implemented  |
+| Weather Context          | `weather_service.py`      | Implemented  |
+| Geospatial Context       | `geospatial_service.py`   | Implemented  |
+| Event Clustering         | *(future)*                | Not started  |
+| Attribution Engine       | *(future)*                | Not started  |
+| Historical Analysis      | *(future)*                | Not started  |
+
 
 ## Future Extensions
 
 The following modules can be added without modifying existing services:
 
-1. **Database persistence** — Add SQLAlchemy models and store observations
-2. **Event clustering** — Group nearby observations into events
-3. **ML attribution** — Classify event causes using contextual features
-4. **Historical analysis** — Track patterns over time
-5. **Explainability** — Provide evidence-based reasoning for classifications
+1. **Event clustering** — Group nearby observations into events
+2. **ML attribution** — Classify event causes using contextual features
+3. **Historical analysis** — Track patterns over time
+4. **Explainability** — Provide evidence-based reasoning for classifications
+

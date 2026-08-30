@@ -15,6 +15,7 @@ References:
   https://firms.modaps.eosdis.nasa.gov/api/area/
 """
 
+import asyncio
 import csv
 import hashlib
 import io
@@ -24,6 +25,7 @@ from typing import Optional
 
 import httpx
 
+from app.core.config import get_settings
 from app.schemas.observation import HotspotResponse
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,22 @@ DEFAULT_SATELLITE = "NOAA-20"
 DEFAULT_AREA = "world"
 DEFAULT_DAY_RANGE = 1
 MAX_DAY_RANGE = 5
+
+
+def _mask_key(key: str) -> str:
+    """Mask MAP_KEY for logging/errors to avoid exposing secrets."""
+    if not key:
+        return "***"
+    if len(key) <= 6:
+        return "***"
+    return f"{key[:3]}...{key[-3:]}"
+
+
+def _mask_url(url: str, map_key: str) -> str:
+    """Replace map key with masked representation in URL."""
+    if map_key and map_key in url:
+        return url.replace(map_key, _mask_key(map_key))
+    return url
 
 
 def _resolve_source(satellite: str) -> str:
@@ -198,31 +216,43 @@ async def fetch_hotspots(
     satellite: str = DEFAULT_SATELLITE,
     day_range: int = DEFAULT_DAY_RANGE,
     area: Optional[str] = None,
-    timeout: int = 60,
+    timeout: Optional[int] = None,
+    max_retries: Optional[int] = None,
+    retry_delay_seconds: Optional[float] = None,
 ) -> tuple[list[HotspotResponse], str, str]:
     """
-    Fetch thermal hotspot data from NASA FIRMS.
+    Fetch thermal hotspot data from NASA FIRMS with retry and failure handling.
 
     Args:
-        map_key:   Your NASA FIRMS MAP_KEY.
-        satellite: User-friendly satellite name ('NOAA-20' or 'NOAA-21').
-        day_range: Number of past days (1-5).
-        area:      Bounding box 'xmin,ymin,xmax,ymax' or 'world'.
-        timeout:   HTTP timeout in seconds.
+        map_key:             NASA FIRMS MAP_KEY.
+        satellite:           User-friendly satellite name ('NOAA-20' or 'NOAA-21').
+        day_range:           Number of past days (1-5).
+        area:                Bounding box 'xmin,ymin,xmax,ymax' or 'world'.
+        timeout:             HTTP timeout in seconds (default from settings).
+        max_retries:         Max retry attempts (default from settings).
+        retry_delay_seconds: Base retry delay in seconds (default from settings).
 
     Returns:
         Tuple of (observations, source_name, area_used).
 
     Raises:
-        ValueError: if satellite name is invalid.
-        httpx.HTTPError: on network or HTTP errors.
-        RuntimeError: if FIRMS returns an error response.
+        ValueError: if satellite name is invalid or map_key is missing.
+        RuntimeError: if FIRMS returns an error response after retries.
     """
     if not map_key:
         raise ValueError(
             "FIRMS_MAP_KEY is not configured. "
             "Obtain a free key at https://firms.modaps.eosdis.nasa.gov/api/"
         )
+
+    settings = get_settings()
+    timeout_sec = timeout if timeout is not None else settings.firms_timeout_seconds
+    retries = max_retries if max_retries is not None else settings.firms_max_retries
+    delay_sec = (
+        retry_delay_seconds
+        if retry_delay_seconds is not None
+        else settings.firms_retry_delay_seconds
+    )
 
     # Validate day range
     day_range = max(1, min(day_range, MAX_DAY_RANGE))
@@ -235,37 +265,85 @@ async def fetch_hotspots(
 
     # Build URL
     url = _build_url(map_key, source, area_used, day_range)
+    masked_url = _mask_url(url, map_key)
 
     logger.info(
-        "Fetching FIRMS data — source=%s area=%s days=%d",
-        source, area_used, day_range,
+        "Fetching FIRMS data — source=%s area=%s days=%d (timeout=%ds, max_retries=%d)",
+        source,
+        area_used,
+        day_range,
+        timeout_sec,
+        retries,
     )
 
-    # ── HTTP request ──────────────────────────────────────────
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(url)
+    attempt = 0
+    last_error: Optional[Exception] = None
 
-    # Check for FIRMS error responses
-    if response.status_code != 200:
-        error_text = response.text[:500]
-        raise RuntimeError(
-            f"FIRMS API returned status {response.status_code}: {error_text}"
-        )
+    while attempt <= retries:
+        attempt += 1
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                response = await client.get(url)
 
-    raw_csv = response.text
+            # Check for non-retryable 4xx client errors (except 429 rate limit)
+            if 400 <= response.status_code < 500 and response.status_code != 429:
+                error_text = response.text[:300]
+                masked_err = error_text.replace(map_key, _mask_key(map_key)) if map_key else error_text
+                raise RuntimeError(
+                    f"FIRMS API client error ({response.status_code}): {masked_err}"
+                )
 
-    # FIRMS sometimes returns error messages as plain text
-    if raw_csv.startswith("Error") or "Invalid" in raw_csv[:100]:
-        raise RuntimeError(f"FIRMS API error: {raw_csv[:300]}")
+            # Check for 5xx server errors or 429 rate limit
+            if response.status_code != 200:
+                error_text = response.text[:300]
+                masked_err = error_text.replace(map_key, _mask_key(map_key)) if map_key else error_text
+                raise httpx.HTTPStatusError(
+                    f"FIRMS API status {response.status_code}: {masked_err}",
+                    request=response.request,
+                    response=response,
+                )
 
-    line_count = raw_csv.count("\n")
-    logger.info(
-        "FIRMS returned %d lines (approx %d observations)",
-        line_count,
-        max(0, line_count - 1),
+            raw_csv = response.text
+
+            # FIRMS sometimes returns error messages as plain text with 200 OK
+            if raw_csv.startswith("Error") or "Invalid MAP_KEY" in raw_csv:
+                masked_err = raw_csv[:300].replace(map_key, _mask_key(map_key)) if map_key else raw_csv[:300]
+                raise RuntimeError(f"FIRMS API error: {masked_err}")
+
+            line_count = raw_csv.count("\n")
+            logger.info(
+                "FIRMS returned %d lines (approx %d observations)",
+                line_count,
+                max(0, line_count - 1),
+            )
+
+            observations = _parse_csv_to_observations(raw_csv, source)
+            return observations, source, area_used
+
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            last_error = exc
+            if attempt <= retries:
+                backoff = delay_sec * (2 ** (attempt - 1))
+                logger.warning(
+                    "FIRMS fetch attempt %d/%d failed: %s. Retrying in %.1fs...",
+                    attempt,
+                    retries + 1,
+                    str(exc),
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+            else:
+                logger.error(
+                    "FIRMS fetch failed after %d attempts: %s",
+                    attempt,
+                    str(exc),
+                )
+        except RuntimeError as exc:
+            # Domain or unrecoverable client errors (invalid key, bad parameters)
+            logger.error("FIRMS fetch unrecoverable error: %s", exc)
+            raise
+
+    raise RuntimeError(
+        f"FIRMS fetch failed after {retries + 1} attempts: {last_error}"
     )
 
-    # ── Parse CSV ─────────────────────────────────────────────
-    observations = _parse_csv_to_observations(raw_csv, source)
-
-    return observations, source, area_used

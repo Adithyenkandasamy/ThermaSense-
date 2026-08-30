@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import api_router
 from app.core.config import get_settings
 from app.core.database import init_db, close_db
+from app.scheduler import start_scheduler, stop_scheduler
 
 settings = get_settings()
 
@@ -27,12 +28,16 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Async lifespan — initialize and dispose database engine."""
+    """Async lifespan — initialize DB & scheduler on start, clean up on stop."""
     await init_db()
+    if settings.firms_monitoring_enabled:
+        start_scheduler()
     logger.info("ThermaSense API initialized (env=%s)", settings.app_env)
     yield
+    stop_scheduler()
     await close_db()
     logger.info("ThermaSense API shutdown complete")
+
 
 
 def create_app() -> FastAPI:
